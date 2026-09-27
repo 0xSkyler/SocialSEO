@@ -22,10 +22,10 @@ jobs:
         shell: pwsh
         run: |
           $b64 = (Get-Content "social-seo-4.4.0-payload\source.b64" -Raw).Trim()
-          if ($b64.Length -ne 123496) { throw "Unexpected base64 length: $($b64.Length)" }
+          if ($b64.Length -ne 123444) { throw "Unexpected base64 length: $($b64.Length)" }
           [IO.File]::WriteAllBytes("social-seo-4.4.0.zip", [Convert]::FromBase64String($b64))
           $actual = (Get-FileHash "social-seo-4.4.0.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
-          $expected = "da2026d1757a80d9a923c51690f915b4ad9b027b2b2886fd73161afd08503548"
+          $expected = "1e4ba85993bec1c74500631c76d9068df87c77beb88b3be3f2df6928a507bfbe"
           Write-Host "Source ZIP SHA-256: $actual"
           if ($actual -ne $expected) { throw "Source archive integrity check failed." }
           New-Item -ItemType Directory -Force -Path buildsrc | Out-Null
