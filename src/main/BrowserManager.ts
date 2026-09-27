@@ -845,11 +845,124 @@ export class BrowserManager extends EventEmitter {
           pageMaxObserved = Math.max(pageMaxObserved, watcher.observedResults || 0);
 
           if (watcher.match) {
-            // Read-only rank tracking: capture the exact organic result and
-            // position but do not click, navigate to, or otherwise interact
-            // with the result page.
+            // Match detection and first click are deliberately coupled to the
+            // same page watcher so Google cannot paginate between them.
             const matched = watcher.match;
-            void wc.executeJavaScript(buildStopGoogleLiveTargetObserverScript(), true).catch(() => undefined);
+            let clickResult = false;
+
+            if (
+              matched.clickPoint &&
+              Number.isFinite(matched.clickPoint.x) &&
+              Number.isFinite(matched.clickPoint.y)
+            ) {
+              try {
+                const x = Math.max(1, Math.round(matched.clickPoint.x));
+                const y = Math.max(1, Math.round(matched.clickPoint.y));
+                wc.sendInputEvent({ type: 'mouseMove', x, y });
+                wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+                wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+                clickResult = true;
+              } catch {
+                clickResult = false;
+              }
+              await delay(450);
+            }
+
+            if (isGoogleSearchResultsUrl(wc.getURL())) {
+              clickResult = Boolean(
+                await Promise.race([
+                  wc.executeJavaScript(buildClickGoogleLiveTargetObserverScript(), true),
+                  delay(350).then(() => false)
+                ]).catch(() => false)
+              ) || clickResult;
+            }
+
+            const navigationDeadline = Date.now() + 3_500;
+            while (Date.now() < navigationDeadline) {
+              if (
+                measurementToken != null &&
+                !this.isMeasurementSessionCurrent(id, measurementToken)
+              ) {
+                return {
+                  browserId: id,
+                  status: 'monitoring',
+                  landedUrl: wc.getURL(),
+                  resultsScanned: totalScanned,
+                  monitoring: true,
+                  ranAt
+                };
+              }
+
+              try {
+                const current = wc.getURL();
+                const host = new URL(current).hostname
+                  .toLowerCase()
+                  .replace(/^www\./, '')
+                  .replace(/\.$/, '');
+                if (host === targetHost) {
+                  totalScanned += pageMaxObserved;
+                  return {
+                    browserId: id,
+                    status: 'matched',
+                    landedUrl: current,
+                    matchedUrl: matched.url,
+                    matchedTitle: matched.title,
+                    resultsScanned: totalScanned,
+                    position: pageIndex * 10 + matched.organicIndex + 1,
+                    resultPage: pageIndex + 1,
+                    monitoring: true,
+                    interactionStatus: 'opened',
+                    keepAliveStarted: false,
+                    ranAt
+                  };
+                }
+              } catch {
+                // Keep waiting while navigation commits.
+              }
+              await delay(75);
+            }
+
+            // DOM/native activation can be ignored by some Google result
+            // layouts. The final fallback uses ONLY the exact URL captured
+            // from the matched Google card; no destination is constructed.
+            if (
+              isGoogleSearchResultsUrl(wc.getURL()) &&
+              (!measurementToken || this.isMeasurementSessionCurrent(id, measurementToken))
+            ) {
+              await wc.loadURL(matched.url).catch(() => undefined);
+            }
+
+            const fallbackDeadline = Date.now() + 5_000;
+            while (Date.now() < fallbackDeadline) {
+              try {
+                const current = wc.getURL();
+                const host = new URL(current).hostname
+                  .toLowerCase()
+                  .replace(/^www\./, '')
+                  .replace(/\.$/, '');
+                if (host === targetHost) {
+                  totalScanned += pageMaxObserved;
+                  return {
+                    browserId: id,
+                    status: 'matched',
+                    landedUrl: current,
+                    matchedUrl: matched.url,
+                    matchedTitle: matched.title,
+                    resultsScanned: totalScanned,
+                    position: pageIndex * 10 + matched.organicIndex + 1,
+                    resultPage: pageIndex + 1,
+                    monitoring: true,
+                    interactionStatus: 'opened',
+                    keepAliveStarted: false,
+                    ranAt
+                  };
+                }
+              } catch {
+                // Navigation is still settling.
+              }
+              await delay(100);
+            }
+
             totalScanned += pageMaxObserved;
             return {
               browserId: id,
@@ -861,7 +974,8 @@ export class BrowserManager extends EventEmitter {
               position: pageIndex * 10 + matched.organicIndex + 1,
               resultPage: pageIndex + 1,
               monitoring: true,
-              interactionStatus: 'detected',
+              interactionStatus: 'click-failed',
+              error: 'Target appeared in Google, but navigation to the detected result did not complete.',
               keepAliveStarted: false,
               ranAt
             };
