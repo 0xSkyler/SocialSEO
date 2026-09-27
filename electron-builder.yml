@@ -35,7 +35,7 @@ win:
       arch:
         - x64
   icon: build/icons/icon.ico
-  artifactName: ProxyDesk-v0.6.0-Setup.${ext}
+  artifactName: MultiBrowserProxySetup.${ext}
 
 nsis:
   oneClick: false
@@ -44,7 +44,7 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: ProxyDesk
-  artifactName: ProxyDesk-v0.6.0-Setup.${ext}
+  artifactName: MultiBrowserProxySetup.${ext}
 
 # Linux/mac targets are not required by this project (Windows-only deliverable)
 # but are left buildable for local development on other platforms.
