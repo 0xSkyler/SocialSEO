@@ -574,8 +574,7 @@ export class SeoAutomationManager extends EventEmitter {
 
       if (result.status === 'matched') {
         this.emit('seoResult', { cycleNumber, result });
-        await sleep(observationIntervalMs);
-        continue;
+        return;
       }
 
       this.emit('seoResult', { cycleNumber, result });
@@ -589,7 +588,9 @@ export class SeoAutomationManager extends EventEmitter {
         continue;
       }
 
-      await sleep(observationIntervalMs);
+      // One rank observation per browser per cycle. The next scheduled cycle
+      // rotates the keyword and proxy set.
+      return;
     }
   }
 
