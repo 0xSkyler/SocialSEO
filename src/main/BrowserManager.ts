@@ -72,6 +72,13 @@ export interface BrowserManagerOptions {
  * navigate() (fresh intent) or once a page loads that ISN'T the block page. */
 const MAX_GOOGLE_BLOCK_RETRIES = 3;
 
+/**
+ * Fail-closed routing used whenever a browser has no validated proxy lease.
+ * Port 9 on loopback is deliberately unreachable for HTTP(S), so a managed
+ * BrowserView can never silently fall back to the machine's direct network.
+ */
+export const FAIL_CLOSED_PROXY_RULE = 'http://127.0.0.1:9';
+
 interface ManagedBrowser {
   id: number;
   view: BrowserView;
@@ -126,6 +133,8 @@ export function extractGoogleBlockContinueUrl(url: string): string | null {
 export declare interface BrowserManager {
   on(event: 'stateChanged', listener: (state: BrowserState) => void): this;
   emit(event: 'stateChanged', state: BrowserState): boolean;
+  on(event: 'proxyFailed', listener: (browserId: number, error: string) => void): this;
+  emit(event: 'proxyFailed', browserId: number, error: string): boolean;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- standard Node EventEmitter typed-events pattern
@@ -203,6 +212,11 @@ export class BrowserManager extends EventEmitter {
     await Promise.allSettled([ses.clearStorageData(), ses.clearCache()]);
     if (options.userAgent) ses.setUserAgent(options.userAgent);
 
+    // Install the deny-all route before a BrowserView exists. This closes the
+    // startup gap where Chromium could otherwise make direct requests before
+    // the first live proxy is assigned.
+    await ses.setProxy({ proxyRules: FAIL_CLOSED_PROXY_RULE });
+
     const view = new BrowserView({
       webPreferences: {
         session: ses,
@@ -221,7 +235,7 @@ export class BrowserManager extends EventEmitter {
       canGoBack: false,
       canGoForward: false,
       proxy: null,
-      connectionStatus: 'idle',
+      connectionStatus: 'no-proxy',
       crashCount: 0,
       keepAliveEnabled: false,
       keepAliveHops: 0,
@@ -252,8 +266,9 @@ export class BrowserManager extends EventEmitter {
     this.wireEvents(managed, options);
 
     this.window?.addBrowserView(view);
-    const startUrl = normalizeUrl(options.startPage);
-    await view.webContents.loadURL(startUrl).catch((err) => {
+    // A browser without a live proxy is intentionally parked on about:blank.
+    // The configured start page is used only after a verified proxy lease.
+    await view.webContents.loadURL('about:blank').catch((err) => {
       logger.warn('browser', `Browser ${id} failed initial load: ${(err as Error).message}`);
       this.updateState(managed, { connectionStatus: 'proxy-failed', errorMessage: (err as Error).message });
     });
@@ -276,7 +291,7 @@ export class BrowserManager extends EventEmitter {
         loading: false,
         canGoBack: wc.canGoBack(),
         canGoForward: wc.canGoForward(),
-        connectionStatus: 'connected'
+        connectionStatus: managed.state.proxy ? 'connected' : 'no-proxy'
       });
     });
     wc.on('did-stop-loading', () => {
@@ -285,7 +300,7 @@ export class BrowserManager extends EventEmitter {
         loading: false,
         canGoBack: wc.canGoBack(),
         canGoForward: wc.canGoForward(),
-        connectionStatus: 'connected'
+        connectionStatus: managed.state.proxy ? 'connected' : 'no-proxy'
       });
     });
     wc.on('did-navigate', (_e, url) => {
@@ -305,6 +320,9 @@ export class BrowserManager extends EventEmitter {
         errorMessage: errorDescription
       });
       logger.warn('browser', `Browser ${id} failed to load: ${errorDescription} (${errorCode})`);
+      if (managed.state.proxy) {
+        this.emit('proxyFailed', id, `${errorDescription} (${errorCode})`);
+      }
     });
 
     wc.on('render-process-gone', (_e, details) => {
@@ -345,6 +363,10 @@ export class BrowserManager extends EventEmitter {
       return;
     }
     managed.restartAttempts += 1;
+    if (!managed.state.proxy) {
+      this.updateState(managed, { connectionStatus: 'no-proxy' });
+      return;
+    }
     const lastUrl = managed.state.url;
     logger.info('browser', `Restarting Browser ${managed.id} (attempt ${managed.restartAttempts}/3).`);
     try {
@@ -416,13 +438,16 @@ export class BrowserManager extends EventEmitter {
 
   async navigate(id: number, url: string): Promise<void> {
     const managed = this.get(id);
+    if (!managed.state.proxy) throw new Error('Browser has no live proxy assigned.');
     managed.googleBlockRetries = 0;
     const normalized = normalizeUrl(url);
     await managed.view.webContents.loadURL(normalized);
   }
 
   async reload(id: number): Promise<void> {
-    this.get(id).view.webContents.reload();
+    const managed = this.get(id);
+    if (!managed.state.proxy) throw new Error('Browser has no live proxy assigned.');
+    managed.view.webContents.reload();
   }
 
   async stop(id: number): Promise<void> {
@@ -440,7 +465,9 @@ export class BrowserManager extends EventEmitter {
   }
 
   async reloadAll(): Promise<void> {
-    for (const managed of this.browsers.values()) managed.view.webContents.reload();
+    for (const managed of this.browsers.values()) {
+      if (managed.state.proxy) managed.view.webContents.reload();
+    }
   }
 
   async stopAll(): Promise<void> {
@@ -462,6 +489,7 @@ export class BrowserManager extends EventEmitter {
 
   async restart(id: number): Promise<void> {
     const managed = this.get(id);
+    if (!managed.state.proxy) throw new Error('Browser has no live proxy assigned.');
     managed.restartAttempts = 0;
     managed.view.webContents.reload();
   }
@@ -487,10 +515,9 @@ export class BrowserManager extends EventEmitter {
   async assignProxy(id: number, proxy: ProxyRecord | null): Promise<void> {
     const managed = this.get(id);
 
-    // Proxy changes define a new browsing generation. Cancel any old Keep
-    // Alive worker here as a final safety net even if the orchestration layer
-    // already stopped it, so a stale action can never leak into the new proxy
-    // session.
+    // Stop the old document before touching routing. No page is allowed to
+    // continue making requests while a proxy lease is being removed/replaced.
+    managed.view.webContents.stop();
     managed.keepAliveGeneration += 1;
     managed.keepAliveEnabled = false;
     managed.keepAliveBusy = false;
@@ -498,28 +525,65 @@ export class BrowserManager extends EventEmitter {
     managed.keepAliveNextAt = Number.POSITIVE_INFINITY;
     managed.controlledKeepAliveHost = null;
     managed.controlledKeepAliveContinuous = false;
+    managed.googleBlockRetries = 0;
+
     this.updateState(managed, {
       proxy,
       connectionStatus: proxy ? 'proxy-checking' : 'no-proxy',
       keepAliveEnabled: false,
-      keepAliveActivity: 'idle'
+      keepAliveActivity: 'idle',
+      errorMessage: undefined
     });
 
     if (!proxy) {
-      await managed.session.setProxy({ mode: 'direct' });
+      await managed.session.setProxy({ proxyRules: FAIL_CLOSED_PROXY_RULE });
+      await managed.view.webContents.loadURL('about:blank').catch(() => undefined);
       return;
     }
 
     const scheme = proxy.protocol === 'https' ? 'https' : proxy.protocol;
     await managed.session.setProxy({
-      proxyRules: `${scheme}://${proxy.host}:${proxy.port}`,
-      proxyBypassRules: '<local>'
+      proxyRules: `${scheme}://${proxy.host}:${proxy.port}`
     });
+    await managed.view.webContents.loadURL('about:blank').catch(() => undefined);
+  }
 
+  async verifyAssignedProxy(
+    id: number,
+    timeoutMs = 9000
+  ): Promise<{ ok: boolean; detectedIp?: string; error?: string }> {
+    const managed = this.get(id);
+    if (!managed.state.proxy) {
+      return { ok: false, error: 'No proxy is assigned.' };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
     try {
-      await managed.view.webContents.reload();
+      const response = await managed.session.fetch('https://api.ipify.org?format=json', {
+        signal: controller.signal,
+        cache: 'no-store'
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = (await response.json()) as { ip?: string };
+      if (!payload.ip) throw new Error('IP verification returned no address.');
+
+      this.updateState(managed, {
+        connectionStatus: 'connected',
+        detectedIp: payload.ip,
+        lastIpCheckAt: new Date().toISOString(),
+        errorMessage: undefined
+      });
+      return { ok: true, detectedIp: payload.ip };
     } catch (err) {
-      logger.warn('browser', `Browser ${id} failed to reload after proxy change: ${(err as Error).message}`);
+      const message = err instanceof Error ? err.message : String(err);
+      this.updateState(managed, {
+        connectionStatus: 'proxy-failed',
+        errorMessage: `Proxy session check failed: ${message}`
+      });
+      return { ok: false, error: message };
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -568,6 +632,14 @@ export class BrowserManager extends EventEmitter {
   ): Promise<BroadcastSearchResult> {
     const managed = this.get(id);
     const wc = managed.view.webContents;
+    if (!managed.state.proxy || managed.state.connectionStatus === 'no-proxy') {
+      return {
+        browserId: id,
+        status: 'error',
+        error: 'Browser has no verified proxy lease.',
+        ranAt: new Date().toISOString()
+      };
+    }
     const ranAt = new Date().toISOString();
     const targetHost = normalizeTargetHost(targetWebsite);
 
@@ -1064,6 +1136,7 @@ export class BrowserManager extends EventEmitter {
   ): Promise<boolean> {
     const managed = this.get(id);
     const wc = managed.view.webContents;
+    if (!managed.state.proxy) return false;
     const normalizedHost = normalizeTargetHost(controlledHost);
     if (!normalizedHost || !this.isMeasurementSessionCurrent(id, measurementToken)) return false;
 
@@ -1169,6 +1242,7 @@ export class BrowserManager extends EventEmitter {
 
   startControlledKeepAlive(id: number, controlledHost: string): void {
     const managed = this.get(id);
+    if (!managed.state.proxy) throw new Error('Cannot start Keep Alive without a live proxy.');
     const normalizedHost = normalizeTargetHost(controlledHost);
     if (!normalizedHost) throw new Error('Invalid controlled test host.');
 
