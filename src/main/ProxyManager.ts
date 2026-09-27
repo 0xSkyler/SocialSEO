@@ -5,10 +5,11 @@ import type {
   ReloadProgress,
   ReloadProxiesSummary
 } from '../shared/types/proxy';
+import type { ProxyProviderId } from '../shared/types/automation';
 import { dedupeProxies, parseBulkText } from '../proxy/ProxyParser';
 import { ProxyValidator } from '../proxy/ProxyValidator';
 import { scoreProxy } from '../proxy/ProxyScorer';
-import { fetchProxyScrapeFreeList } from '../proxy/ProxyScrapeProvider';
+import { fetchProxyProviderList } from '../proxy/ProxyProvider';
 import { logger } from './Logger';
 
 const VALIDATION_TIMEOUT_MS = 4000;
@@ -29,12 +30,16 @@ export class ProxyManager extends EventEmitter {
   private assignments = new Map<number, ProxyRecord | null>();
   private validationController: AbortController | null = null;
   private usedProxyIds = new Set<string>();
+  private quarantinedProxyIds = new Set<string>();
+  private fetchedCount = 0;
 
   async init(): Promise<void> {
     this.allProxies.clear();
     this.assignments.clear();
     this.usedProxyIds.clear();
-    logger.info('proxy', 'Proxy manager ready: ProxyScrape API source, session-only state.');
+    this.quarantinedProxyIds.clear();
+    this.fetchedCount = 0;
+    logger.info('proxy', 'Proxy manager ready: selectable public providers, session-only state.');
   }
 
   getAll(): ProxyRecord[] {
@@ -43,6 +48,20 @@ export class ProxyManager extends EventEmitter {
 
   getAssignment(browserId: number): ProxyRecord | null {
     return this.assignments.get(browserId) ?? null;
+  }
+
+  getWorkingCount(): number {
+    return Array.from(this.allProxies.values()).filter(
+      (proxy) => proxy.status === 'working' && !this.quarantinedProxyIds.has(proxy.id)
+    ).length;
+  }
+
+  getAssignedCount(): number {
+    return Array.from(this.assignments.values()).filter(Boolean).length;
+  }
+
+  isValidationInProgress(): boolean {
+    return this.validationController !== null;
   }
 
   resetRotationHistory(): void {
@@ -54,15 +73,56 @@ export class ProxyManager extends EventEmitter {
     this.validationController = null;
   }
 
-  /**
-   * Fetches ProxyScrape's public feed, validates it locally, and assigns live
-   * proxies immediately as individual validation results arrive.
-   *
-   * One proxy is exclusive to one browser in a cycle. Across cycles, proxies
-   * already used by automation stay ineligible until the available live pool
-   * has been exhausted, at which point a new rotation round begins.
-   */
+  rejectAssignment(browserId: number, proxyId: string, reason?: string): void {
+    const assigned = this.assignments.get(browserId);
+    if (assigned?.id === proxyId) this.assignments.delete(browserId);
+
+    this.quarantinedProxyIds.add(proxyId);
+    const proxy = this.allProxies.get(proxyId);
+    if (proxy) {
+      proxy.status = 'dead';
+      proxy.failureCount += 1;
+      proxy.score = scoreProxy(proxy);
+      this.allProxies.set(proxy.id, proxy);
+    }
+
+    if (reason) {
+      logger.warn('proxy', `Browser ${browserId} rejected proxy ${proxyId}: ${reason}`);
+    }
+  }
+
+  leaseNextWorking(browserId: number, excludedIds: Set<string> = new Set()): ProxyRecord | null {
+    const assignedElsewhere = new Set(
+      Array.from(this.assignments.entries())
+        .filter(([id, proxy]) => id !== browserId && proxy)
+        .map(([, proxy]) => (proxy as ProxyRecord).id)
+    );
+
+    const available = Array.from(this.allProxies.values())
+      .filter(
+        (proxy) =>
+          proxy.status === 'working' &&
+          !this.quarantinedProxyIds.has(proxy.id) &&
+          !excludedIds.has(proxy.id) &&
+          !assignedElsewhere.has(proxy.id)
+      )
+      .sort((a, b) => (b.score - a.score) || ((a.latencyMs ?? Infinity) - (b.latencyMs ?? Infinity)));
+
+    if (available.length === 0) return null;
+
+    let proxy = available.find((candidate) => !this.usedProxyIds.has(candidate.id));
+    if (!proxy) {
+      for (const candidate of available) this.usedProxyIds.delete(candidate.id);
+      proxy = available[0];
+    }
+
+    this.assignments.set(browserId, proxy);
+    this.usedProxyIds.add(proxy.id);
+    return proxy;
+  }
+
   async fetchValidateAssignStreaming(
+    provider: ProxyProviderId,
     browserIds: number[],
     onAssignment: (assignment: ProxyAssignment, checked: number, total: number) => void,
     onProgress?: (checked: number, total: number, working: number, assigned: number, fetched: number) => void
@@ -70,10 +130,10 @@ export class ProxyManager extends EventEmitter {
     this.cancelCurrentValidation();
     const controller = new AbortController();
     this.validationController = controller;
+    this.quarantinedProxyIds.clear();
 
     const previousAssignments = new Map(this.assignments);
-
-    const raw = await fetchProxyScrapeFreeList({
+    const fetched = await fetchProxyProviderList(provider, {
       limit: 2000,
       timeoutFilterMs: VALIDATION_TIMEOUT_MS,
       requestTimeoutMs: 15_000,
@@ -82,14 +142,13 @@ export class ProxyManager extends EventEmitter {
 
     if (controller.signal.aborted) throw new Error('Proxy validation cancelled.');
 
-    const parsed = parseBulkText(raw, 'ProxyScrape Free API');
+    const parsed = parseBulkText(fetched.raw, fetched.label);
     const replacement = dedupeProxies(parsed.proxies);
     if (replacement.length === 0) {
-      throw new Error('ProxyScrape returned no usable proxies.');
+      throw new Error(`${fetched.label} returned no usable proxies.`);
     }
 
-    // Keep rotation history only for endpoints that still exist in the newly
-    // fetched public feed.
+    this.fetchedCount = replacement.length;
     const replacementIds = new Set(replacement.map((proxy) => proxy.id));
     for (const id of Array.from(this.usedProxyIds)) {
       if (!replacementIds.has(id)) this.usedProxyIds.delete(id);
@@ -98,13 +157,22 @@ export class ProxyManager extends EventEmitter {
       this.usedProxyIds.clear();
     }
 
+    const ordered = [
+      ...replacement.filter((proxy) => !this.usedProxyIds.has(proxy.id)),
+      ...replacement.filter((proxy) => this.usedProxyIds.has(proxy.id))
+    ];
+    const validationLimit = Math.min(
+      ordered.length,
+      Math.max(200, Math.min(800, browserIds.length * 8))
+    );
+    const candidates = ordered.slice(0, validationLimit);
+
     this.allProxies.clear();
     this.assignments.clear();
-    for (const proxy of replacement) {
+    for (const proxy of candidates) {
       this.allProxies.set(proxy.id, { ...proxy, status: 'checking' });
     }
 
-    const candidates = Array.from(this.allProxies.values());
     const total = candidates.length;
     const remainingBrowsers = new Set(browserIds);
     const usedThisCycle = new Set<string>();
@@ -113,7 +181,7 @@ export class ProxyManager extends EventEmitter {
 
     const emitProgress = (checked: number) => {
       this.emit('reloadProgress', { checked, total });
-      onProgress?.(checked, total, working, assigned, replacement.length);
+      onProgress?.(checked, total, working, assigned, this.fetchedCount);
     };
 
     emitProgress(0);
@@ -125,89 +193,92 @@ export class ProxyManager extends EventEmitter {
       return ids.find((id) => previousAssignments.get(id)?.id !== proxy.id) ?? ids[0] ?? null;
     };
 
-    const results = await ProxyValidator.validateMany(candidates, {
-      timeoutMs: VALIDATION_TIMEOUT_MS,
-      ipCheckUrl: IP_CHECK_URL,
-      maxConcurrent: MAX_CONCURRENT_CHECKS,
-      signal: controller.signal,
-      onResult: (result, checked, resultTotal) => {
-        if (controller.signal.aborted) return;
-        const proxy = this.allProxies.get(result.proxyId);
-        if (!proxy) return;
+    try {
+      const results = await ProxyValidator.validateMany(candidates, {
+        timeoutMs: VALIDATION_TIMEOUT_MS,
+        ipCheckUrl: IP_CHECK_URL,
+        maxConcurrent: MAX_CONCURRENT_CHECKS,
+        signal: controller.signal,
+        onResult: (result, checked, resultTotal) => {
+          if (controller.signal.aborted) return;
+          const proxy = this.allProxies.get(result.proxyId);
+          if (!proxy) return;
 
+          proxy.status = result.status;
+          proxy.latencyMs = result.latencyMs;
+          proxy.lastChecked = result.checkedAt;
+          if (result.status === 'working') {
+            proxy.successCount += 1;
+            working += 1;
+          } else {
+            proxy.failureCount += 1;
+          }
+          proxy.score = scoreProxy(proxy);
+          this.allProxies.set(proxy.id, proxy);
+
+          if (result.status === 'working') {
+            const browserId = chooseBrowser(proxy);
+            if (browserId != null) {
+              this.assignments.set(browserId, proxy);
+              remainingBrowsers.delete(browserId);
+              usedThisCycle.add(proxy.id);
+              this.usedProxyIds.add(proxy.id);
+              assigned += 1;
+              onAssignment({ browserId, proxy }, checked, resultTotal);
+              this.emitAssignments(browserIds, this.fetchedCount, working);
+            }
+          }
+
+          this.emit('reloadProgress', { checked, total: resultTotal });
+          onProgress?.(checked, resultTotal, working, assigned, this.fetchedCount);
+        }
+      });
+
+      if (controller.signal.aborted || this.validationController !== controller) {
+        return this.summary(browserIds, this.fetchedCount, this.getWorkingCount());
+      }
+
+      for (const result of results) {
+        const proxy = this.allProxies.get(result.proxyId);
+        if (!proxy || this.quarantinedProxyIds.has(proxy.id)) continue;
         proxy.status = result.status;
         proxy.latencyMs = result.latencyMs;
         proxy.lastChecked = result.checkedAt;
-        if (result.status === 'working') {
-          proxy.successCount += 1;
-          working += 1;
-        } else {
-          proxy.failureCount += 1;
-        }
         proxy.score = scoreProxy(proxy);
         this.allProxies.set(proxy.id, proxy);
+      }
 
-        if (result.status === 'working') {
-          const browserId = chooseBrowser(proxy);
-          if (browserId != null) {
-            this.assignments.set(browserId, proxy);
-            remainingBrowsers.delete(browserId);
-            usedThisCycle.add(proxy.id);
-            this.usedProxyIds.add(proxy.id);
-            assigned += 1;
-            onAssignment({ browserId, proxy }, checked, resultTotal);
-            this.emitAssignments(browserIds, replacement.length, working);
+      const live = Array.from(this.allProxies.values()).filter(
+        (proxy) => proxy.status === 'working' && !this.quarantinedProxyIds.has(proxy.id)
+      );
+      if (
+        remainingBrowsers.size > 0 &&
+        live.length > 0 &&
+        live.every((proxy) => this.usedProxyIds.has(proxy.id))
+      ) {
+        for (const proxy of live) {
+          if (!Array.from(this.assignments.values()).some((assignedProxy) => assignedProxy?.id === proxy.id)) {
+            this.usedProxyIds.delete(proxy.id);
           }
         }
 
-        this.emit('reloadProgress', { checked, total: resultTotal });
-        onProgress?.(checked, resultTotal, working, assigned, replacement.length);
+        for (const browserId of Array.from(remainingBrowsers)) {
+          const proxy = this.leaseNextWorking(browserId, usedThisCycle);
+          if (!proxy) break;
+          remainingBrowsers.delete(browserId);
+          usedThisCycle.add(proxy.id);
+          assigned += 1;
+          onAssignment({ browserId, proxy }, total, total);
+        }
       }
-    });
 
-    if (controller.signal.aborted || this.validationController !== controller) {
-      return this.summary(browserIds, replacement.length, working);
+      emitProgress(total);
+      const summary = this.summary(browserIds, this.fetchedCount, this.getWorkingCount());
+      this.emit('assignmentsChanged', summary);
+      return summary;
+    } finally {
+      if (this.validationController === controller) this.validationController = null;
     }
-
-    // Preserve final states from the validator.
-    for (const result of results) {
-      const proxy = this.allProxies.get(result.proxyId);
-      if (!proxy) continue;
-      proxy.status = result.status;
-      proxy.latencyMs = result.latencyMs;
-      proxy.lastChecked = result.checkedAt;
-      proxy.score = scoreProxy(proxy);
-      this.allProxies.set(proxy.id, proxy);
-    }
-
-    // If every live endpoint has already been consumed in earlier rounds,
-    // begin a new round and fill any browsers that did not receive a proxy.
-    const live = Array.from(this.allProxies.values()).filter((proxy) => proxy.status === 'working');
-    if (
-      remainingBrowsers.size > 0 &&
-      live.length > 0 &&
-      live.every((proxy) => this.usedProxyIds.has(proxy.id))
-    ) {
-      this.usedProxyIds.clear();
-      for (const browserId of Array.from(remainingBrowsers)) {
-        const eligible = live.filter((proxy) => !usedThisCycle.has(proxy.id));
-        if (eligible.length === 0) break;
-        const previousId = previousAssignments.get(browserId)?.id;
-        const proxy = eligible.find((candidate) => candidate.id !== previousId) ?? eligible[0];
-        this.assignments.set(browserId, proxy);
-        remainingBrowsers.delete(browserId);
-        usedThisCycle.add(proxy.id);
-        this.usedProxyIds.add(proxy.id);
-        assigned += 1;
-        onAssignment({ browserId, proxy }, total, total);
-      }
-    }
-
-    emitProgress(total);
-    const summary = this.summary(browserIds, replacement.length, working);
-    this.emit('assignmentsChanged', summary);
-    if (this.validationController === controller) this.validationController = null;
-    return summary;
   }
 
   private emitAssignments(browserIds: number[], found: number, working: number): void {
