@@ -572,91 +572,9 @@ export class SeoAutomationManager extends EventEmitter {
         return;
       }
 
-      if (
-        result.status === 'matched' &&
-        result.interactionStatus === 'opened' &&
-        result.matchedUrl
-      ) {
-        this.browserManager.startControlledKeepAlive(browserId, interactionHost);
-        this.emit('seoResult', {
-          cycleNumber,
-          result: {
-            ...result,
-            keepAliveStarted: true
-          }
-        });
-        return;
-      }
-
-      if (result.status === 'matched' && result.interactionStatus === 'click-failed') {
+      if (result.status === 'matched') {
         this.emit('seoResult', { cycleNumber, result });
-        await sleep(3_000);
-        continue;
-      }
-
-      if (result.status === 'matched' && result.matchedUrl) {
-        let matchedHost = '';
-        try {
-          matchedHost = new URL(result.matchedUrl).hostname
-            .toLowerCase()
-            .replace(/^www\./, '')
-            .replace(/\.$/, '');
-        } catch {
-          matchedHost = '';
-        }
-
-        if (matchedHost !== interactionHost) {
-          this.emit('seoResult', {
-            cycleNumber,
-            result: {
-              ...result,
-              interactionStatus: 'click-failed',
-              error: `Matched result host ${matchedHost || 'unknown'} does not equal configured interaction host ${interactionHost}.`
-            }
-          });
-          await sleep(3_000);
-          continue;
-        }
-
-        this.emit('seoResult', {
-          cycleNumber,
-          result: {
-            ...result,
-            interactionStatus: 'opening'
-          }
-        });
-
-        const clicked = await this.browserManager.clickControlledGoogleResult(
-          browserId,
-          query,
-          interactionHost,
-          result.matchedUrl,
-          measurementToken
-        );
-
-        if (clicked) {
-          this.browserManager.startControlledKeepAlive(browserId, interactionHost);
-          this.emit('seoResult', {
-            cycleNumber,
-            result: {
-              ...result,
-              landedUrl: result.matchedUrl,
-              interactionStatus: 'opened',
-              keepAliveStarted: true
-            }
-          });
-          return;
-        }
-
-        this.emit('seoResult', {
-          cycleNumber,
-          result: {
-            ...result,
-            interactionStatus: 'click-failed',
-            error: 'Target was detected, but the result could not be opened. ProxyDesk will retry in this session.'
-          }
-        });
-        await sleep(3_000);
+        await sleep(observationIntervalMs);
         continue;
       }
 
