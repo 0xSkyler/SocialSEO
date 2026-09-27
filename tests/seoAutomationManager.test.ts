@@ -77,16 +77,27 @@ function makeBrowserHarness(
 
 function waitForResult(
   manager: SeoAutomationManager,
-  cycleNumber: number
+  cycleNumber: number,
+  predicate: (result: BroadcastSearchResult) => boolean = () => true
 ): Promise<BroadcastSearchResult> {
   return new Promise((resolve) => {
     const listener = (payload: { cycleNumber: number; result: BroadcastSearchResult }) => {
-      if (payload.cycleNumber !== cycleNumber) return;
+      if (payload.cycleNumber !== cycleNumber || !predicate(payload.result)) return;
       manager.off('seoResult', listener);
       resolve(payload.result);
     };
     manager.on('seoResult', listener);
   });
+}
+
+async function waitForCycleIdle(manager: SeoAutomationManager, cycleNumber: number): Promise<void> {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    const state = manager.getState();
+    if (state.cycleNumber >= cycleNumber && !state.cycleInProgress) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Cycle ${cycleNumber} did not become idle.`);
 }
 
 describe('SeoAutomationManager v0.6', () => {
@@ -141,6 +152,7 @@ describe('SeoAutomationManager v0.6', () => {
       maxPages: 20
     });
     await first;
+    await waitForCycleIdle(manager, 1);
 
     expect(providers[0]).toBe('proxifly');
     expect(harness.searches[0]).toBe('A');
@@ -149,6 +161,7 @@ describe('SeoAutomationManager v0.6', () => {
     const second = waitForResult(manager, 2);
     await manager.runNow();
     await second;
+    await waitForCycleIdle(manager, 2);
 
     expect(harness.searches[1]).toBe('B');
     expect(manager.getState().currentQuery).toBe('B');
@@ -156,6 +169,7 @@ describe('SeoAutomationManager v0.6', () => {
     const third = waitForResult(manager, 3);
     await manager.runNow();
     await third;
+    await waitForCycleIdle(manager, 3);
     expect(harness.searches[2]).toBe('C');
 
     const fourth = waitForResult(manager, 4);
@@ -213,7 +227,7 @@ describe('SeoAutomationManager v0.6', () => {
     });
 
     const manager = new SeoAutomationManager(proxyManager, harness.browserManager, async () => [1]);
-    const result = waitForResult(manager, 1);
+    const result = waitForResult(manager, 1, (observed) => observed.status === 'no-match');
 
     await manager.start({
       query: 'test',
