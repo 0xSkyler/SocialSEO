@@ -616,7 +616,7 @@ describe('Google live-result observation', () => {
     expect(disconnected).toHaveBeenCalled();
   });
 
-  it('locks page 1 until a delayed target appears, records it, and never requests page 2', async () => {
+  it('locks page 1 until a delayed target appears, opens it, and never requests page 2', async () => {
     const targetUrl = 'https://appareldiary.com/article/rmg-cutting';
     let currentUrl = 'about:blank';
     let loading = false;
@@ -709,11 +709,11 @@ describe('Google live-result observation', () => {
     expect(result.status).toBe('matched');
     expect(result.resultPage).toBe(1);
     expect(result.matchedUrl).toBe(targetUrl);
-    expect(result.interactionStatus).toBe('detected');
-    expect(currentUrl).toContain('google.com/search');
+    expect(result.interactionStatus).toBe('opened');
+    expect(currentUrl).toBe(targetUrl);
   });
 
-  it('records the observer-captured exact result URL without navigating to it', async () => {
+  it('uses the observer-captured exact result URL if the in-page click is ignored', async () => {
     const targetUrl = 'https://appareldiary.com/article/rmg-cutting';
     let currentUrl = 'about:blank';
     let loading = false;
@@ -787,10 +787,10 @@ describe('Google live-result observation', () => {
     );
 
     expect(result.status).toBe('matched');
-    expect(result.interactionStatus).toBe('detected');
+    expect(result.interactionStatus).toBe('opened');
     expect(result.matchedUrl).toBe(targetUrl);
-    expect(loadURL).toHaveBeenCalledTimes(1);
-    expect(currentUrl).toContain('google.com/search');
+    expect(loadURL).toHaveBeenLastCalledWith(targetUrl);
+    expect(currentUrl).toBe(targetUrl);
   });
 
   it('returns PAUSED when the live observer sees a Google challenge', async () => {

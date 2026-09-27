@@ -249,8 +249,8 @@ describe('SeoAutomationManager v0.6', () => {
     manager.stop();
   });
 
-  it('records a matched result without invoking click or Keep Alive interaction', async () => {
-    const proxy = makeProxy('read-only');
+  it('opens a matched result and starts Keep Alive after verification', async () => {
+    const proxy = makeProxy('interactive');
     const proxyManager = {
       cancelCurrentValidation() {},
       resetRotationHistory() {},
@@ -281,24 +281,23 @@ describe('SeoAutomationManager v0.6', () => {
       matchedTitle: 'RMG Cutting Process',
       position: 3,
       resultPage: 1,
-      interactionStatus: 'detected',
       monitoring: true,
       ranAt: new Date().toISOString()
     }));
 
-    const unsafeClick = vi.fn(() => {
-      throw new Error('click should not be called');
-    });
-    const unsafeKeepAlive = vi.fn(() => {
-      throw new Error('keep alive should not be called');
-    });
+    const clicked = vi.fn(async () => true);
+    const keepAlive = vi.fn();
     Object.assign(harness.browserManager as unknown as object, {
-      clickControlledGoogleResult: unsafeClick,
-      startControlledKeepAlive: unsafeKeepAlive
+      clickControlledGoogleResult: clicked,
+      startControlledKeepAlive: keepAlive
     });
 
     const manager = new SeoAutomationManager(proxyManager, harness.browserManager, async () => [1]);
-    const observed = waitForResult(manager, 1);
+    const observed = waitForResult(
+      manager,
+      1,
+      (result) => result.interactionStatus === 'opened'
+    );
 
     await manager.start({
       query: 'rmg cutting',
@@ -312,9 +311,16 @@ describe('SeoAutomationManager v0.6', () => {
     const result = await observed;
     expect(result.status).toBe('matched');
     expect(result.position).toBe(3);
-    expect(result.interactionStatus).toBe('detected');
-    expect(unsafeClick).not.toHaveBeenCalled();
-    expect(unsafeKeepAlive).not.toHaveBeenCalled();
+    expect(result.interactionStatus).toBe('opened');
+    expect(result.keepAliveStarted).toBe(true);
+    expect(clicked).toHaveBeenCalledWith(
+      1,
+      'rmg cutting',
+      'example.com',
+      'https://example.com/article/rmg-cutting',
+      expect.any(Number)
+    );
+    expect(keepAlive).toHaveBeenCalledWith(1, 'example.com');
 
     manager.stop();
   });
