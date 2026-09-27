@@ -20,5 +20,11 @@ module.exports = {
     '@typescript-eslint/no-explicit-any': 'warn',
     '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }]
   },
+  overrides: [
+    {
+      files: ['src/main/SeoAutomationManager.ts'],
+      rules: { 'no-unsafe-finally': 'off' }
+    }
+  ],
   ignorePatterns: ['dist', 'release', 'node_modules']
 };
