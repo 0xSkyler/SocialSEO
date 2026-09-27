@@ -1,0 +1,136 @@
+name: Build Social SEO 4.4.0 Installer
+
+on:
+  push:
+    branches:
+      - social-seo-4.4.0-final-build
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: '0'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - name: Checkout build branch
+        uses: actions/checkout@v4
+
+      - name: Reconstruct base and apply 4.4.0 overlay
+        shell: pwsh
+        run: |
+          $baseParts = @(
+            "social-seo-build-payload\part-00.b64",
+            "social-seo-build-payload\part-01.b64",
+            "social-seo-build-payload\part-02.b64",
+            "social-seo-build-payload\part-03.b64",
+            "social-seo-build-payload\part-04.b64",
+            "social-seo-build-payload\part-05.b64",
+            "social-seo-build-payload\tail-00a.b64",
+            "social-seo-build-payload\tail-00b.b64",
+            "social-seo-build-payload\tail-01.b64",
+            "social-seo-build-payload\tail-02.b64",
+            "social-seo-build-payload\tail-03.b64",
+            "social-seo-build-payload\tail-04.b64",
+            "social-seo-build-payload\tail-05.b64",
+            "social-seo-build-payload\tail-06a.b64",
+            "social-seo-build-payload\tail-06b0.b64",
+            "social-seo-build-payload\tail-06b10.b64",
+            "social-seo-build-payload\tail-06b11.b64",
+            "social-seo-build-payload\tail-07a0.b64",
+            "social-seo-build-payload\tail-07a1.b64",
+            "social-seo-build-payload\tail-07b.b64",
+            "social-seo-build-payload\tail-08a.b64",
+            "social-seo-build-payload\tail-08b.b64"
+          )
+          foreach ($f in $baseParts) {
+            if (-not (Test-Path $f)) { throw "Missing base payload chunk: $f" }
+          }
+          $base64 = ($baseParts | ForEach-Object { (Get-Content $_ -Raw).Trim() }) -join ""
+          [IO.File]::WriteAllBytes("base436.zip", [Convert]::FromBase64String($base64))
+          $baseHash = (Get-FileHash "base436.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expectedBase = "356a3d12ffcf4bd2487fadacd1bd9ee2e415ecfd2e1019a8bdc491ee89eae227"
+          Write-Host "Base 4.3.6 SHA-256: $baseHash"
+          if ($baseHash -ne $expectedBase) { throw "Base source integrity check failed." }
+
+          New-Item -ItemType Directory -Force -Path buildsrc | Out-Null
+          Expand-Archive -Path "base436.zip" -DestinationPath buildsrc -Force
+
+          $overlayParts = 0..17 | ForEach-Object { ".social-seo-440\c4-{0:D2}.b64" -f $_ }
+          foreach ($f in $overlayParts) {
+            if (-not (Test-Path $f)) { throw "Missing 4.4.0 overlay chunk: $f" }
+          }
+          $overlay64 = ($overlayParts | ForEach-Object { (Get-Content $_ -Raw).Trim() }) -join ""
+          if ($overlay64.Length -ne 68468) { throw "Unexpected overlay base64 length: $($overlay64.Length)" }
+          [IO.File]::WriteAllBytes("overlay440.zip", [Convert]::FromBase64String($overlay64))
+          $overlayHash = (Get-FileHash "overlay440.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expectedOverlay = "5696c1e77829b3da05f0422db4e807751b15edc6c3bda831516afaed66d95846"
+          Write-Host "4.4.0 overlay SHA-256: $overlayHash"
+          if ($overlayHash -ne $expectedOverlay) { throw "4.4.0 overlay integrity check failed." }
+
+          Expand-Archive -Path "overlay440.zip" -DestinationPath overlay440 -Force
+          $project = "buildsrc\Social-SEO"
+
+          Get-Content "overlay440\DELETE_FILES.txt" | ForEach-Object {
+            $rel = $_.Trim()
+            if ($rel) {
+              Remove-Item -LiteralPath (Join-Path $project $rel) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+          $overlayRoot = (Resolve-Path "overlay440").Path
+          Get-ChildItem "overlay440" -Recurse -File |
+            Where-Object { $_.Name -ne "DELETE_FILES.txt" } |
+            ForEach-Object {
+              $rel = $_.FullName.Substring($overlayRoot.Length).TrimStart('\')
+              $dest = Join-Path $project $rel
+              New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+              Copy-Item -LiteralPath $_.FullName -Destination $dest -Force
+            }
+
+          $version = (Get-Content "$project\package.json" -Raw | ConvertFrom-Json).version
+          Write-Host "Final project version: $version"
+          if ($version -ne "4.4.0") { throw "Unexpected final version: $version" }
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies and Chromium shell
+        shell: pwsh
+        working-directory: buildsrc/Social-SEO
+        run: npm install
+
+      - name: Validate final source
+        shell: pwsh
+        working-directory: buildsrc/Social-SEO
+        run: npm run verify
+
+      - name: Build Windows installer
+        shell: pwsh
+        working-directory: buildsrc/Social-SEO
+        run: npx electron-builder --win nsis --publish never
+
+      - name: Hash installer
+        shell: pwsh
+        working-directory: buildsrc/Social-SEO
+        run: |
+          $exe = "release\Social-SEO-Setup-4.4.0.exe"
+          if (-not (Test-Path $exe)) { throw "Installer missing: $exe" }
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  Social-SEO-Setup-4.4.0.exe" | Set-Content "release\Social-SEO-Setup-4.4.0.exe.sha256.txt"
+          Write-Host "Installer SHA-256: $hash"
+          Get-Item $exe | Format-List FullName,Length
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Social-SEO-4.4.0-Windows
+          path: |
+            buildsrc/Social-SEO/release/Social-SEO-Setup-4.4.0.exe
+            buildsrc/Social-SEO/release/Social-SEO-Setup-4.4.0.exe.sha256.txt
+          if-no-files-found: error
+          retention-days: 7
