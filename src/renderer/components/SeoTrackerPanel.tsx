@@ -89,10 +89,10 @@ export function SeoTrackerPanel(): JSX.Element {
     <section className="seo-tracker">
       <div className="seo-tracker__title">
         <div>
-          <h1>ProxyDesk Rank Tracker</h1>
+          <h1>ProxyDesk SEO Tracker</h1>
           <p>
-            Fail-closed browser sessions → selected proxy provider → local validation →
-            read-only Google rank observation → scheduled rotation.
+            Fail-closed browser sessions → selected proxy provider → validation → Google target
+            detection → click + landing verification → Keep Alive → scheduled rotation.
           </p>
         </div>
         <span className={running || starting ? 'tracker-pill tracker-pill--on' : 'tracker-pill'}>
@@ -197,6 +197,12 @@ export function SeoTrackerPanel(): JSX.Element {
         <button disabled={!running} onClick={() => void stop()}>
           Stop SEO Tracker
         </button>
+        <button onClick={() => void window.app.browser.setKeepAliveAll(true)}>
+          Keep Alive All
+        </button>
+        <button onClick={() => void window.app.browser.setKeepAliveAll(false)}>
+          Stop Keep Alive
+        </button>
       </div>
 
       <div className="tracker-status">
@@ -224,8 +230,9 @@ export function SeoTrackerPanel(): JSX.Element {
         Browsers are fail-closed: without a validated proxy they remain on about:blank behind
         an unreachable local route, never the direct network. If a proxy fails inside Chromium,
         it is quarantined and replaced with another unassigned live proxy. Comma-separated
-        keywords advance one per cycle and wrap after the last keyword. Rank checks are read-only:
-        results are observed and recorded without clicking them.
+        keywords advance one per cycle and wrap after the last keyword. When the saved target is
+        detected in Google, ProxyDesk clicks that detected result, verifies the target host opened,
+        then runs the existing Keep Alive scroll and same-site article-hop loop until rotation.
       </div>
 
       <div className="tracker-results">
