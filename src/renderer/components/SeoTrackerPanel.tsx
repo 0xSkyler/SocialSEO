@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import {
+  PROXY_PROVIDER_IDS,
+  PROXY_PROVIDER_LABELS,
+  type ProxyProviderId
+} from '../../shared/types/automation';
 import { useAppStore } from '../stores/appStore';
 
 export function SeoTrackerPanel(): JSX.Element {
@@ -9,6 +14,7 @@ export function SeoTrackerPanel(): JSX.Element {
   const pushToast = useAppStore((state) => state.pushToast);
 
   const [query, setQuery] = useState('');
+  const [proxySource, setProxySource] = useState<ProxyProviderId>('proxyscrape');
   const [targetWebsite, setTargetWebsite] = useState('');
   const [controlledTestHost, setControlledTestHost] = useState('');
   const [intervalSec, setIntervalSec] = useState(600);
@@ -19,6 +25,7 @@ export function SeoTrackerPanel(): JSX.Element {
   useEffect(() => {
     if (!automation) return;
     if (automation.query) setQuery(automation.query);
+    setProxySource(automation.proxySource);
     if (automation.targetWebsite) setTargetWebsite(automation.targetWebsite);
     setControlledTestHost(automation.controlledTestHost ?? '');
     setIntervalSec(automation.intervalSec);
@@ -49,6 +56,7 @@ export function SeoTrackerPanel(): JSX.Element {
     try {
       await window.app.automation.start({
         query: query.trim(),
+        proxySource,
         targetWebsite: targetWebsite.trim(),
         controlledTestHost: controlledTestHost.trim() || undefined,
         intervalSec,
@@ -81,10 +89,10 @@ export function SeoTrackerPanel(): JSX.Element {
     <section className="seo-tracker">
       <div className="seo-tracker__title">
         <div>
-          <h1>ProxyDesk SEO Tracker Lite</h1>
+          <h1>ProxyDesk Rank Tracker</h1>
           <p>
-            ProxyScrape API → validation → Google monitoring → challenge pause/resume →
-            exact-host result opening → 2-scroll article hopping → rotation.
+            Fail-closed browser sessions → selected proxy provider → local validation →
+            read-only Google rank observation → scheduled rotation.
           </p>
         </div>
         <span className={running || starting ? 'tracker-pill tracker-pill--on' : 'tracker-pill'}>
@@ -98,12 +106,27 @@ export function SeoTrackerPanel(): JSX.Element {
 
       <div className="tracker-controls">
         <label>
-          Keyword
+          Proxy provider
+          <select
+            value={proxySource}
+            disabled={running}
+            onChange={(event) => setProxySource(event.target.value as ProxyProviderId)}
+          >
+            {PROXY_PROVIDER_IDS.map((provider) => (
+              <option key={provider} value={provider}>
+                {PROXY_PROVIDER_LABELS[provider]}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          Keywords (comma separated)
           <input
             value={query}
             disabled={running}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="rmg cutting"
+            placeholder="keyword A, keyword B, keyword C"
           />
         </label>
 
@@ -174,17 +197,14 @@ export function SeoTrackerPanel(): JSX.Element {
         <button disabled={!running} onClick={() => void stop()}>
           Stop SEO Tracker
         </button>
-        <button onClick={() => void window.app.browser.setKeepAliveAll(true)}>
-          Keep Alive All
-        </button>
-        <button onClick={() => void window.app.browser.setKeepAliveAll(false)}>
-          Stop Keep Alive
-        </button>
       </div>
 
       <div className="tracker-status">
-        <span>Source <strong>ProxyScrape Free API</strong></span>
+        <span>
+          Source <strong>{PROXY_PROVIDER_LABELS[automation?.proxySource ?? proxySource]}</strong>
+        </span>
         <span>Cycle <strong>{automation?.cycleNumber ?? 0}</strong></span>
+        <span>Keyword <strong>{automation?.currentQuery || '—'}</strong></span>
         <span>Fetched <strong>{automation?.fetchedProxies ?? 0}</strong></span>
         <span>
           Validated <strong>{automation?.checkedProxies ?? 0}/{automation?.totalProxies ?? 0}</strong>
@@ -201,12 +221,11 @@ export function SeoTrackerPanel(): JSX.Element {
       )}
 
       <div className="tracker-note">
-        Each proxy session continuously monitors the saved keyword + website. Google
-        challenges pause the monitor instead of ending it; when normal results return in
-        the same session, scanning resumes. The Target website is the interaction host by
-        default. A matched result must either open that exact host and start Keep Alive, or
-        report an explicit click failure. Browser sessions are isolated in memory and start
-        fresh after every app restart.
+        Browsers are fail-closed: without a validated proxy they remain on about:blank behind
+        an unreachable local route, never the direct network. If a proxy fails inside Chromium,
+        it is quarantined and replaced with another unassigned live proxy. Comma-separated
+        keywords advance one per cycle and wrap after the last keyword. Rank checks are read-only:
+        results are observed and recorded without clicking them.
       </div>
 
       <div className="tracker-results">
