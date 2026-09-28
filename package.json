@@ -1,13 +1,13 @@
 {
-  "name": "proxydesk",
-  "productName": "ProxyDesk",
-  "version": "0.1.0",
-  "description": "Multi-browser proxy workspace desktop application — 10 independent, proxy-isolated Chromium sessions in one window.",
-  "author": "ProxyDesk",
+  "name": "pocketseo-mobile",
+  "productName": "PocketSEO Mobile",
+  "version": "1.0.0",
+  "description": "Mobile Chrome-profile edition of the ProxyDesk SEO workflow with continuous validated proxy storage.",
+  "author": "PocketSEO Mobile",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/proxydesk.git"
+    "url": "https://github.com/0xSkyler/proxydesk.git"
   },
   "main": "dist/main/main.js",
   "private": true,
