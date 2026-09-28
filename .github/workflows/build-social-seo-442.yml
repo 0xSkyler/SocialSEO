@@ -44,7 +44,17 @@ jobs:
       - name: Apply Social SEO 4.4.2 continuous proxy-store patch
         shell: pwsh
         run: |
-          $b64 = (Get-Content "social-seo-4.4.2-patch\patch.b64" -Raw).Trim()
+          $parts = @(
+            "social-seo-4.4.2-patch\chunk-0.b64",
+            "social-seo-4.4.2-patch\chunk-1.b64",
+            "social-seo-4.4.2-patch\chunk-2.b64",
+            "social-seo-4.4.2-patch\chunk-3.b64",
+            "social-seo-4.4.2-patch\chunk-4.b64"
+          )
+          foreach ($part in $parts) {
+            if (-not (Test-Path $part)) { throw "Missing 4.4.2 payload chunk: $part" }
+          }
+          $b64 = ($parts | ForEach-Object { (Get-Content $_ -Raw).Trim() }) -join ""
           if ($b64.Length -ne 28024) { throw "Unexpected 4.4.2 patch base64 length: $($b64.Length)" }
           [IO.File]::WriteAllBytes("social-seo-4.4.2-patch.zip", [Convert]::FromBase64String($b64))
           $actual = (Get-FileHash "social-seo-4.4.2-patch.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
