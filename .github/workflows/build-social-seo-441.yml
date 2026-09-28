@@ -52,6 +52,28 @@ jobs:
           $smoke = $smoke.Replace($old, $new)
           Set-Content -Path $smokePath -Value $smoke -Encoding utf8
 
+          $testPath = "buildsrc\Social-SEO\tests\lightweightArchitecture.test.ts"
+          $test = Get-Content $testPath -Raw
+          $oldTest = @"
+  it('reuses one temporary Chromium process for concurrent proxy validation', () => {
+    const validator = read('src/main/ProxyValidator.ts');
+    expect(validator).toContain('private browserPromise?: Promise<PwBrowser>');
+    expect(validator).toContain('browser.newContext');
+    expect(validator).toContain('scheduleIdleClose');
+  });
+"@
+          $newTest = @"
+  it('uses lightweight request-only proxy validation', () => {
+    const validator = read('src/main/ProxyValidator.ts');
+    expect(validator).not.toContain('private browserPromise?: Promise<PwBrowser>');
+    expect(validator).not.toContain('browser.newContext');
+    expect(validator).toContain('getPlaywright().request.newContext');
+  });
+"@
+          if (-not $test.Contains($oldTest.Trim())) { throw "Expected inherited lightweight architecture test not found." }
+          $test = $test.Replace($oldTest.Trim(), $newTest.Trim())
+          Set-Content -Path $testPath -Value $test -Encoding utf8
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
