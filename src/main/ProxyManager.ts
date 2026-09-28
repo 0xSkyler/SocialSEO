@@ -14,9 +14,6 @@ import { logger } from './Logger';
 const VALIDATION_TIMEOUT_MS = 4000;
 const MAX_CONCURRENT_CHECKS = 32;
 const IP_CHECK_URL = 'https://api.ipify.org?format=json';
-const STORE_MIN_SIZE = 20;
-const STORE_MULTIPLIER = 2;
-const STORE_MAX_SIZE = 200;
 const STORE_REFILL_PAUSE_MS = 500;
 const STORE_RETRY_PAUSE_MS = 5_000;
 const STORE_BATCH_SIZE = 256;
@@ -34,12 +31,17 @@ export class ProxyManager extends EventEmitter {
   private allProxies = new Map<string, ProxyRecord>();
   private assignments = new Map<number, ProxyRecord | null>();
   private validationController: AbortController | null = null;
+
+  // Temporary zone containing ONLY the live proxies prepared for the next
+  // rotation. It is frozen at rotation time, consumed once, then completely
+  // erased before preparation for the following rotation begins.
   private storeController: AbortController | null = null;
   private storeRunning = false;
-  private storeTargetSize = STORE_MIN_SIZE;
+  private storeTargetSize = 1;
   private validatedStore = new Map<string, ProxyRecord>();
-  private storeSeenIds = new Set<string>();
-  private previousCohortIds = new Set<string>();
+  private storeSeenEndpoints = new Set<string>();
+
+  // Retained only for the legacy validate-and-assign fallback below.
   private usedProxyIds = new Set<string>();
 
   async init(): Promise<void> {
@@ -48,8 +50,7 @@ export class ProxyManager extends EventEmitter {
     this.usedProxyIds.clear();
     this.stopValidatedProxyStore();
     this.validatedStore.clear();
-    this.storeSeenIds.clear();
-    this.previousCohortIds.clear();
+    this.storeSeenEndpoints.clear();
     logger.info('proxy', 'Proxy manager ready: ProxyScrape API source, session-only state.');
   }
 
@@ -71,29 +72,30 @@ export class ProxyManager extends EventEmitter {
   }
 
   /**
-   * Starts a background live-proxy store for the automation session.
-   *
-   * The worker is independent of cycle boundaries. It validates proxies while
-   * browsers are working and keeps a bounded reserve ready for later cycles.
+   * Begin preparing the temporary zone used by the very next rotation.
+   * Validation happens while the current browser cycle is running.
    */
   startValidatedProxyStore(browserCount: number): void {
-    const normalizedCount = Math.max(1, Math.min(100, Math.floor(browserCount || 1)));
-    this.storeTargetSize = Math.max(
-      STORE_MIN_SIZE,
-      Math.min(STORE_MAX_SIZE, normalizedCount * STORE_MULTIPLIER)
-    );
-
-    if (this.storeRunning) return;
-
     this.storeRunning = true;
-    this.validatedStore.clear();
-    this.storeSeenIds.clear();
-    this.previousCohortIds.clear();
-    this.restartStoreWorker();
+    this.prepareFreshRotationBuffer(browserCount);
   }
 
+  /**
+   * Stop all next-rotation preparation and discard the temporary zone.
+   */
   stopValidatedProxyStore(): void {
     this.storeRunning = false;
+    this.storeController?.abort();
+    this.storeController = null;
+    this.validatedStore.clear();
+    this.storeSeenEndpoints.clear();
+  }
+
+  /**
+   * Freeze the already-prepared temporary zone before a rotation consumes it.
+   * No newly validated proxy can enter the zone after this call.
+   */
+  pauseValidatedProxyStore(): void {
     this.storeController?.abort();
     this.storeController = null;
   }
@@ -103,47 +105,60 @@ export class ProxyManager extends EventEmitter {
   }
 
   /**
-   * Called after cycle 5, 10, 15, ... has received its proxies.
-   *
-   * Remaining stored proxies from the completed five-cycle cohort are deleted.
-   * Proxies used in that cohort are excluded from the immediately following
-   * cohort so the new store is genuinely rebuilt from fresh endpoints.
+   * Drop the previous rotation's logical proxy assignments. BrowserManager
+   * swaps each browser directly to its newly prepared proxy immediately after
+   * this, so there is no deliberate direct-network phase between rotations.
    */
-  resetValidatedStoreForNextCohort(): void {
-    this.previousCohortIds = new Set(this.usedProxyIds);
-    this.usedProxyIds.clear();
-    this.validatedStore.clear();
-    this.storeSeenIds.clear();
-    this.allProxies.clear();
-    this.restartStoreWorker();
-    logger.info('proxy', 'Cleared validated proxy store after five cycles; rebuilding a fresh store.');
+  dropCurrentAssignments(): void {
+    this.assignments.clear();
   }
 
   /**
-   * Atomically removes one validated proxy from the reserve and leases it to
-   * the supplied browser. Assigned endpoints are never present in the reserve.
+   * After the prepared proxies have been assigned for this rotation, erase
+   * every remaining proxy/check from that temporary zone and immediately start
+   * validating a completely new zone for the next rotation.
+   */
+  resetValidatedStoreForNextRotation(browserCount: number): void {
+    this.validatedStore.clear();
+    this.storeSeenEndpoints.clear();
+    this.allProxies.clear();
+
+    if (!this.storeRunning) return;
+
+    this.prepareFreshRotationBuffer(browserCount);
+    logger.info(
+      'proxy',
+      'Rotation proxies assigned; erased temporary proxy zone and started fresh validation for the next rotation.'
+    );
+  }
+
+  /**
+   * Remove one already-validated proxy from the frozen temporary zone and
+   * lease it exclusively to one browser for the current rotation.
    */
   takeValidatedProxy(browserId: number): ProxyRecord | null {
-    const previousId = this.assignments.get(browserId)?.id;
     const candidates = Array.from(this.validatedStore.values())
       .filter((proxy) => proxy.status === 'working')
       .sort((a, b) => (b.score - a.score) || ((a.latencyMs ?? Infinity) - (b.latencyMs ?? Infinity)));
 
-    if (candidates.length === 0) return null;
+    const proxy = candidates[0];
+    if (!proxy) return null;
 
-    const proxy = candidates.find((candidate) => candidate.id !== previousId) ?? candidates[0];
     this.validatedStore.delete(proxy.id);
     this.assignments.set(browserId, proxy);
-    this.usedProxyIds.add(proxy.id);
-
-    // Consuming a stored proxy creates room in the reserve. The background
-    // worker notices immediately and continues replenishing it.
     return proxy;
   }
 
-  private restartStoreWorker(): void {
+  private prepareFreshRotationBuffer(browserCount: number): void {
+    const normalizedCount = Math.max(1, Math.min(100, Math.floor(browserCount || 1)));
+    this.storeTargetSize = normalizedCount;
+
     this.storeController?.abort();
     this.storeController = null;
+    this.validatedStore.clear();
+    this.storeSeenEndpoints.clear();
+    this.allProxies.clear();
+
     if (!this.storeRunning) return;
 
     const controller = new AbortController();
@@ -152,126 +167,145 @@ export class ProxyManager extends EventEmitter {
   }
 
   private async runStoreWorker(controller: AbortController): Promise<void> {
-    while (
-      this.storeRunning &&
-      this.storeController === controller &&
-      !controller.signal.aborted
-    ) {
-      if (this.validatedStore.size >= this.storeTargetSize) {
-        await waitWithAbort(STORE_REFILL_PAUSE_MS, controller.signal);
-        continue;
-      }
-
-      try {
-        const raw = await fetchProxyScrapeFreeList({
-          limit: 2000,
-          timeoutFilterMs: VALIDATION_TIMEOUT_MS,
-          requestTimeoutMs: 15_000,
-          signal: controller.signal
-        });
-
-        if (controller.signal.aborted || this.storeController !== controller) return;
-
-        const parsed = parseBulkText(raw, 'ProxyScrape Free API');
-        const replacement = dedupeProxies(parsed.proxies);
-        const assignedIds = new Set(
-          Array.from(this.assignments.values())
-            .filter((proxy): proxy is ProxyRecord => Boolean(proxy))
-            .map((proxy) => proxy.id)
-        );
-
-        let candidates = replacement.filter(
-          (proxy) =>
-            !this.validatedStore.has(proxy.id) &&
-            !this.usedProxyIds.has(proxy.id) &&
-            !this.previousCohortIds.has(proxy.id) &&
-            !assignedIds.has(proxy.id) &&
-            !this.storeSeenIds.has(proxy.id)
-        );
-
-        // A public feed can remain unchanged for a while. Once every currently
-        // eligible endpoint has been checked, allow dead endpoints to be
-        // reconsidered on a later pass while still excluding stored/used/
-        // assigned/previous-cohort proxies.
-        if (candidates.length === 0) {
-          this.storeSeenIds.clear();
-          candidates = replacement.filter(
-            (proxy) =>
-              !this.validatedStore.has(proxy.id) &&
-              !this.usedProxyIds.has(proxy.id) &&
-              !this.previousCohortIds.has(proxy.id) &&
-              !assignedIds.has(proxy.id)
+    try {
+      while (
+        this.storeRunning &&
+        this.storeController === controller &&
+        !controller.signal.aborted
+      ) {
+        if (this.validatedStore.size >= this.storeTargetSize) {
+          logger.info(
+            'proxy',
+            `Next-rotation proxy zone ready: ${this.validatedStore.size}/${this.storeTargetSize} live proxies.`
           );
+          return;
         }
 
-        if (candidates.length === 0) {
-          await waitWithAbort(STORE_RETRY_PAUSE_MS, controller.signal);
-          continue;
-        }
+        try {
+          const raw = await fetchProxyScrapeFreeList({
+            limit: 2000,
+            timeoutFilterMs: VALIDATION_TIMEOUT_MS,
+            requestTimeoutMs: 15_000,
+            signal: controller.signal
+          });
 
-        const need = Math.max(1, this.storeTargetSize - this.validatedStore.size);
-        const batchSize = Math.min(
-          STORE_BATCH_SIZE,
-          Math.max(need * 3, Math.min(64, candidates.length))
-        );
-        const batch = candidates.slice(0, batchSize);
+          if (controller.signal.aborted || this.storeController !== controller) return;
 
-        for (const proxy of batch) {
-          this.storeSeenIds.add(proxy.id);
-          this.allProxies.set(proxy.id, { ...proxy, status: 'checking' });
-        }
+          const parsed = parseBulkText(raw, 'ProxyScrape Free API');
+          const replacement = dedupeProxies(parsed.proxies);
 
-        await ProxyValidator.validateMany(batch, {
-          timeoutMs: VALIDATION_TIMEOUT_MS,
-          ipCheckUrl: IP_CHECK_URL,
-          maxConcurrent: MAX_CONCURRENT_CHECKS,
-          signal: controller.signal,
-          onResult: (result) => {
-            if (
-              controller.signal.aborted ||
-              this.storeController !== controller
-            ) {
-              return;
+          const assignedEndpoints = new Set(
+            Array.from(this.assignments.values())
+              .filter((proxy): proxy is ProxyRecord => Boolean(proxy))
+              .map(endpointKey)
+          );
+          const bufferedEndpoints = new Set(
+            Array.from(this.validatedStore.values()).map(endpointKey)
+          );
+
+          const selectCandidates = (respectSeen: boolean): ProxyRecord[] => {
+            const selected: ProxyRecord[] = [];
+            const selectedEndpoints = new Set<string>();
+
+            for (const proxy of replacement) {
+              const endpoint = endpointKey(proxy);
+              if (assignedEndpoints.has(endpoint)) continue;
+              if (bufferedEndpoints.has(endpoint)) continue;
+              if (selectedEndpoints.has(endpoint)) continue;
+              if (respectSeen && this.storeSeenEndpoints.has(endpoint)) continue;
+
+              selectedEndpoints.add(endpoint);
+              selected.push(proxy);
             }
+            return selected;
+          };
 
-            const source = batch.find((proxy) => proxy.id === result.proxyId);
-            if (!source) return;
+          let candidates = selectCandidates(true);
 
-            const validated: ProxyRecord = {
-              ...source,
-              status: result.status,
-              latencyMs: result.latencyMs,
-              lastChecked: result.checkedAt,
-              successCount: source.successCount + (result.status === 'working' ? 1 : 0),
-              failureCount: source.failureCount + (result.status === 'working' ? 0 : 1)
-            };
-            validated.score = scoreProxy(validated);
-            this.allProxies.set(validated.id, validated);
-
-            if (
-              validated.status === 'working' &&
-              this.validatedStore.size < this.storeTargetSize &&
-              !this.usedProxyIds.has(validated.id) &&
-              !this.previousCohortIds.has(validated.id) &&
-              !Array.from(this.assignments.values()).some(
-                (assigned) => assigned?.id === validated.id
-              )
-            ) {
-              this.validatedStore.set(validated.id, validated);
-            }
+          // If the public feed has not changed, dead endpoints may be checked
+          // again later. Current-cycle assignments and already-buffered
+          // endpoints remain excluded.
+          if (candidates.length === 0) {
+            this.storeSeenEndpoints.clear();
+            candidates = selectCandidates(false);
           }
-        });
 
-        logger.info(
-          'proxy',
-          `Validated proxy store: ${this.validatedStore.size}/${this.storeTargetSize} live proxies ready.`
-        );
+          if (candidates.length === 0) {
+            await waitWithAbort(STORE_RETRY_PAUSE_MS, controller.signal);
+            continue;
+          }
 
-        await waitWithAbort(STORE_REFILL_PAUSE_MS, controller.signal);
-      } catch (err) {
-        if (controller.signal.aborted || this.storeController !== controller) return;
-        logger.warn('proxy', `Continuous proxy validation failed: ${(err as Error).message}`);
-        await waitWithAbort(STORE_RETRY_PAUSE_MS, controller.signal);
+          const need = Math.max(1, this.storeTargetSize - this.validatedStore.size);
+          const batchSize = Math.min(
+            STORE_BATCH_SIZE,
+            Math.max(need * 3, Math.min(64, candidates.length))
+          );
+          const batch = candidates.slice(0, batchSize);
+
+          for (const proxy of batch) {
+            this.storeSeenEndpoints.add(endpointKey(proxy));
+            this.allProxies.set(proxy.id, { ...proxy, status: 'checking' });
+          }
+
+          await ProxyValidator.validateMany(batch, {
+            timeoutMs: VALIDATION_TIMEOUT_MS,
+            ipCheckUrl: IP_CHECK_URL,
+            maxConcurrent: MAX_CONCURRENT_CHECKS,
+            signal: controller.signal,
+            onResult: (result) => {
+              if (
+                controller.signal.aborted ||
+                this.storeController !== controller ||
+                this.validatedStore.size >= this.storeTargetSize
+              ) {
+                return;
+              }
+
+              const source = batch.find((proxy) => proxy.id === result.proxyId);
+              if (!source) return;
+
+              const validated: ProxyRecord = {
+                ...source,
+                status: result.status,
+                latencyMs: result.latencyMs,
+                lastChecked: result.checkedAt,
+                successCount: source.successCount + (result.status === 'working' ? 1 : 0),
+                failureCount: source.failureCount + (result.status === 'working' ? 0 : 1)
+              };
+              validated.score = scoreProxy(validated);
+              this.allProxies.set(validated.id, validated);
+
+              if (validated.status !== 'working') return;
+
+              const endpoint = endpointKey(validated);
+              const currentAssigned = Array.from(this.assignments.values()).some(
+                (assigned) => assigned && endpointKey(assigned) === endpoint
+              );
+              const alreadyBuffered = Array.from(this.validatedStore.values()).some(
+                (stored) => endpointKey(stored) === endpoint
+              );
+
+              if (!currentAssigned && !alreadyBuffered) {
+                this.validatedStore.set(validated.id, validated);
+              }
+            }
+          });
+
+          logger.info(
+            'proxy',
+            `Preparing next rotation: ${this.validatedStore.size}/${this.storeTargetSize} live proxies ready.`
+          );
+
+          await waitWithAbort(STORE_REFILL_PAUSE_MS, controller.signal);
+        } catch (err) {
+          if (controller.signal.aborted || this.storeController !== controller) return;
+          logger.warn('proxy', `Next-rotation proxy validation failed: ${(err as Error).message}`);
+          await waitWithAbort(STORE_RETRY_PAUSE_MS, controller.signal);
+        }
+      }
+    } finally {
+      if (this.storeController === controller && this.validatedStore.size >= this.storeTargetSize) {
+        this.storeController = null;
       }
     }
   }
@@ -447,6 +481,10 @@ export class ProxyManager extends EventEmitter {
       }))
     };
   }
+}
+
+function endpointKey(proxy: Pick<ProxyRecord, 'host' | 'port'>): string {
+  return `${proxy.host.toLowerCase()}:${proxy.port}`;
 }
 
 function waitWithAbort(ms: number, signal: AbortSignal): Promise<void> {
