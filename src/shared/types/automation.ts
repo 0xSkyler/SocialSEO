@@ -1,6 +1,7 @@
 import type { BroadcastSearchResult } from './browser';
 
 export interface SeoAutomationConfig {
+  /** One keyword or multiple keywords separated by commas. */
   query: string;
   targetWebsite: string;
   /** Exact hostname allowed for autonomous click + Keep Alive in controlled testing. */
@@ -17,7 +18,10 @@ export interface SeoAutomationState {
   running: boolean;
   cycleInProgress: boolean;
   proxySource: 'ProxyScrape Free API';
+  /** Original keyword input, including comma-separated values. */
   query: string;
+  /** Keyword used by every browser in the current/most recent cycle. */
+  currentQuery: string;
   targetWebsite: string;
   controlledTestHost?: string;
   intervalSec: number;
@@ -39,6 +43,13 @@ export interface SeoAutomationState {
 export interface SeoAutomationResult {
   cycleNumber: number;
   result: BroadcastSearchResult;
+}
+
+export function parseAutomationKeywords(value: string): string[] {
+  return value
+    .split(',')
+    .map((keyword) => keyword.trim())
+    .filter(Boolean);
 }
 
 export function normalizeAutomationIntervalSeconds(value: number): number {
