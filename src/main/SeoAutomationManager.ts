@@ -327,42 +327,60 @@ export class SeoAutomationManager extends EventEmitter {
         this.proxyManager.dropCurrentAssignments?.();
 
         let assigned = 0;
-        const assignmentTasks = browserIds.map(async (browserId) => {
+        const preparedAssignments: ProxyAssignment[] = browserIds.map((browserId) => {
           const proxy = this.proxyManager.takeValidatedProxy(browserId);
           if (!proxy) {
             throw new Error(`Prepared proxy zone did not contain a proxy for Browser ${browserId}.`);
           }
-
-          assigned += 1;
-          this.state = {
-            ...this.state,
-            assignedBrowsers: assigned,
-            liveProxies: this.proxyManager.getValidatedStoreSize?.() ?? 0
-          };
-          this.emitState();
-
-          await this.handleAssignment(
-            generation,
-            cycleNumber,
-            { browserId, proxy },
-            query,
-            targetWebsite,
-            controlledTestHost,
-            maxPages
-          );
+          return { browserId, proxy };
         });
 
-        await Promise.all(assignmentTasks);
+        // Apply every already-validated proxy first. Once all browsers have
+        // successfully accepted their current-cycle proxy, immediately erase
+        // the consumed zone and begin validating the NEXT cycle's proxies.
+        // Google/search work starts only after that advance validator has been
+        // kicked off, maximizing the entire current rotation as prep time.
+        await Promise.all(
+          preparedAssignments.map(async ({ browserId, proxy }) => {
+            await this.browserManager.assignProxy(browserId, proxy);
+            if (!this.isCurrent(generation)) return;
 
-        // The prepared zone is single-use. Drop every unassigned proxy/check
-        // from it immediately, then start a completely fresh validation run
-        // for the NEXT rotation while this cycle is working.
+            assigned += 1;
+            this.state = {
+              ...this.state,
+              assignedBrowsers: assigned,
+              liveProxies: this.proxyManager.getValidatedStoreSize?.() ?? 0
+            };
+            this.emitState();
+          })
+        );
+
+        if (!this.isCurrent(generation) || this.state.cycleNumber !== cycleNumber) return;
+
+        // The prepared zone is single-use. Start the next cycle's validation
+        // immediately after current proxies are assigned, before current-cycle
+        // Google automation begins.
         this.proxyManager.resetValidatedStoreForNextRotation?.(browserIds.length);
         this.state = {
           ...this.state,
           liveProxies: this.proxyManager.getValidatedStoreSize?.() ?? 0
         };
         this.emitState();
+
+        await Promise.all(
+          preparedAssignments.map((assignment) =>
+            this.handleAssignment(
+              generation,
+              cycleNumber,
+              assignment,
+              query,
+              targetWebsite,
+              controlledTestHost,
+              maxPages,
+              true
+            )
+          )
+        );
       } else {
         // Compatibility path for older test doubles only.
         await this.proxyManager.fetchValidateAssignStreaming(
@@ -413,13 +431,16 @@ export class SeoAutomationManager extends EventEmitter {
     query: string,
     targetWebsite: string,
     controlledTestHost: string | undefined,
-    maxPages: number
+    maxPages: number,
+    proxyAlreadyAssigned = false
   ): Promise<void> {
     if (!assignment.proxy || !this.isCurrent(generation)) return;
 
     const { browserId, proxy } = assignment;
     try {
-      await this.browserManager.assignProxy(browserId, proxy);
+      if (!proxyAlreadyAssigned) {
+        await this.browserManager.assignProxy(browserId, proxy);
+      }
       if (!this.isCurrent(generation)) return;
 
       this.browserManager.setBrowserKeepAlive(browserId, false, false);
