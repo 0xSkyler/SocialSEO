@@ -8,7 +8,8 @@ import type {
 import {
   normalizeAutomationIntervalSeconds,
   normalizeBrowserCount,
-  normalizeSeoMaxPages
+  normalizeSeoMaxPages,
+  parseAutomationKeywords
 } from '../shared/types/automation';
 import { normalizeTargetHost } from '../shared/seo';
 import type { BrowserManager } from './BrowserManager';
@@ -34,14 +35,17 @@ export declare interface SeoAutomationManager {
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class SeoAutomationManager extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
+  private prevalidationTimer: NodeJS.Timeout | null = null;
   private generation = 0;
   private pendingCycle = false;
+  private readonly prevalidationLeadMs = 60_000;
 
   private state: SeoAutomationState = {
     running: false,
     cycleInProgress: false,
     proxySource: 'ProxyScrape Free API',
     query: '',
+    currentQuery: '',
     targetWebsite: '',
     intervalSec: 600,
     browserCount: 10,
@@ -73,10 +77,11 @@ export class SeoAutomationManager extends EventEmitter {
 
   async start(config: SeoAutomationConfig): Promise<SeoAutomationState> {
     const query = config.query.trim();
+    const keywords = parseAutomationKeywords(query);
     const targetWebsite = config.targetWebsite.trim();
     const targetHost = normalizeTargetHost(targetWebsite);
     const requestedInteractionHost = normalizeTargetHost(config.controlledTestHost ?? '');
-    if (!query) throw new Error('Enter a Google search keyword.');
+    if (keywords.length === 0) throw new Error('Enter at least one Google search keyword.');
     if (!targetHost) throw new Error('Enter a valid target website or site name.');
 
     // Target website is the interaction host by default. An explicit override
@@ -92,7 +97,9 @@ export class SeoAutomationManager extends EventEmitter {
     const intervalSec = normalizeAutomationIntervalSeconds(config.intervalSec);
 
     this.stopTimerOnly();
+    this.stopPrevalidationTimerOnly();
     this.proxyManager.cancelCurrentValidation();
+    this.proxyManager.cancelPreparedValidation();
     this.proxyManager.resetRotationHistory();
     this.generation += 1;
     this.pendingCycle = false;
@@ -104,6 +111,7 @@ export class SeoAutomationManager extends EventEmitter {
       cycleInProgress: true,
       proxySource: 'ProxyScrape Free API',
       query,
+      currentQuery: keywords[0],
       targetWebsite,
       controlledTestHost: controlledTestHost || undefined,
       intervalSec,
@@ -162,8 +170,12 @@ export class SeoAutomationManager extends EventEmitter {
       };
       this.emitState();
       void this.requestCycle();
+      this.schedulePrevalidation();
     }, intervalSec * 1000);
 
+    // Cycle 1 starts immediately as in v0.5.4. For every scheduled cycle after
+    // that, begin preparing the next proxy pool exactly one minute beforehand.
+    this.schedulePrevalidation();
     void this.requestCycle();
     return this.getState();
   }
@@ -172,7 +184,9 @@ export class SeoAutomationManager extends EventEmitter {
     this.generation += 1;
     this.pendingCycle = false;
     this.proxyManager.cancelCurrentValidation();
+    this.proxyManager.cancelPreparedValidation();
     this.stopTimerOnly();
+    this.stopPrevalidationTimerOnly();
 
     for (const id of this.state.browserIds) {
       try {
@@ -196,6 +210,7 @@ export class SeoAutomationManager extends EventEmitter {
   async runNow(): Promise<SeoAutomationState> {
     if (!this.state.running) throw new Error('Start SEO Tracker first.');
     await this.requestCycle();
+    this.schedulePrevalidation();
     return this.getState();
   }
 
@@ -203,6 +218,36 @@ export class SeoAutomationManager extends EventEmitter {
     if (!this.timer) return;
     clearInterval(this.timer);
     this.timer = null;
+  }
+
+  private stopPrevalidationTimerOnly(): void {
+    if (!this.prevalidationTimer) return;
+    clearTimeout(this.prevalidationTimer);
+    this.prevalidationTimer = null;
+  }
+
+  private schedulePrevalidation(): void {
+    this.stopPrevalidationTimerOnly();
+    if (!this.state.running || this.state.browserIds.length === 0 || !this.state.nextCycleAt) return;
+
+    const nextCycleAt = Date.parse(this.state.nextCycleAt);
+    if (!Number.isFinite(nextCycleAt)) return;
+
+    // For intervals shorter than one minute there is no possible T-60 point,
+    // so preparation starts immediately while preserving the user's interval.
+    const delayMs = Math.max(0, nextCycleAt - Date.now() - this.prevalidationLeadMs);
+
+    this.prevalidationTimer = setTimeout(() => {
+      this.prevalidationTimer = null;
+      if (!this.state.running) return;
+
+      const browserIds = [...this.state.browserIds];
+      logger.info(
+        'proxy',
+        `Starting next-cycle proxy validation ${Math.max(0, Math.round((Date.parse(this.state.nextCycleAt ?? '') - Date.now()) / 1000))}s before rotation.`
+      );
+      void this.proxyManager.prepareNextCycle(browserIds);
+    }, delayMs);
   }
 
   private emitState(): void {
@@ -224,12 +269,15 @@ export class SeoAutomationManager extends EventEmitter {
     const generation = this.generation;
     const cycleNumber = this.state.cycleNumber + 1;
     const browserIds = [...this.state.browserIds];
-    const { query, targetWebsite, controlledTestHost, maxPages } = this.state;
+    const keywords = parseAutomationKeywords(this.state.query);
+    const query = keywords[(cycleNumber - 1) % keywords.length] ?? this.state.query;
+    const { targetWebsite, controlledTestHost, maxPages } = this.state;
 
     this.state = {
       ...this.state,
       cycleInProgress: true,
       cycleNumber,
+      currentQuery: query,
       fetchedProxies: 0,
       checkedProxies: 0,
       totalProxies: 0,
@@ -242,6 +290,40 @@ export class SeoAutomationManager extends EventEmitter {
 
     const seoTasks: Promise<void>[] = [];
 
+    const onAssignment = (assignment: ProxyAssignment): void => {
+      if (!this.isCurrent(generation)) return;
+      seoTasks.push(
+        this.handleAssignment(
+          generation,
+          cycleNumber,
+          assignment,
+          query,
+          targetWebsite,
+          controlledTestHost,
+          maxPages
+        )
+      );
+    };
+
+    const onProgress = (
+      checked: number,
+      total: number,
+      working: number,
+      assigned: number,
+      fetched: number
+    ): void => {
+      if (!this.isCurrent(generation)) return;
+      this.state = {
+        ...this.state,
+        fetchedProxies: fetched,
+        checkedProxies: checked,
+        totalProxies: total,
+        liveProxies: working,
+        assignedBrowsers: assigned
+      };
+      this.emitState();
+    };
+
     try {
       // Every rotation starts from a clean browser routing state.
       for (const id of browserIds) {
@@ -251,35 +333,23 @@ export class SeoAutomationManager extends EventEmitter {
         await this.browserManager.assignProxy(id, null);
       }
 
-      await this.proxyManager.fetchValidateAssignStreaming(
+      const prepared = this.proxyManager.activatePreparedAssignments(
         browserIds,
-        (assignment) => {
-          if (!this.isCurrent(generation)) return;
-          seoTasks.push(
-            this.handleAssignment(
-              generation,
-              cycleNumber,
-              assignment,
-              query,
-              targetWebsite,
-              controlledTestHost,
-              maxPages
-            )
-          );
-        },
-        (checked, total, working, assigned, fetched) => {
-          if (!this.isCurrent(generation)) return;
-          this.state = {
-            ...this.state,
-            fetchedProxies: fetched,
-            checkedProxies: checked,
-            totalProxies: total,
-            liveProxies: working,
-            assignedBrowsers: assigned
-          };
-          this.emitState();
-        }
+        onAssignment,
+        onProgress
       );
+
+      if (!prepared) {
+        // If T-60 preparation did not finish (or produced no live proxy), keep
+        // the exact v0.5.4 behavior as the fallback: validate and stream live
+        // assignments immediately during the cycle.
+        this.proxyManager.cancelPreparedValidation();
+        await this.proxyManager.fetchValidateAssignStreaming(
+          browserIds,
+          onAssignment,
+          onProgress
+        );
+      }
 
       await Promise.allSettled(seoTasks);
 
@@ -293,7 +363,7 @@ export class SeoAutomationManager extends EventEmitter {
 
       logger.info(
         'application',
-        `SEO cycle ${cycleNumber} complete: ${this.state.liveProxies} live, ` +
+        `SEO cycle ${cycleNumber} (${query}) complete: ${this.state.liveProxies} live, ` +
           `${this.state.assignedBrowsers}/${browserIds.length} browser(s) assigned.`
       );
     } catch (err) {
