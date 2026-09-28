@@ -1,4 +1,5 @@
 name: Build Social SEO 4.4.3 Installer
+# retry with resilient minimal patch
 
 on:
   push:
