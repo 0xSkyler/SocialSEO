@@ -7,6 +7,10 @@ import { registerIpc } from './ipc/registerIpc';
 import { logger } from './Logger';
 import { BROWSER_IDS } from '../shared/types/browser';
 import { normalizeBrowserCount } from '../shared/types/automation';
+import { APP_ID, APP_NAME } from '../shared/constants';
+import { MOBILE_CHROME_USER_AGENT } from '../shared/mobileProfile';
+
+app.setName(APP_NAME);
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
@@ -23,7 +27,7 @@ async function createWindowShell(): Promise<void> {
     minWidth: 1050,
     minHeight: 720,
     backgroundColor: '#0f1115',
-    title: 'ProxyDesk SEO Tracker Lite',
+    title: 'PocketSEO Mobile',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
@@ -67,7 +71,7 @@ async function ensureBrowserCount(count: number): Promise<number[]> {
         browserManager.createBrowser(id, {
           persistSessions: false,
           startPage: 'about:blank',
-          userAgent: ''
+          userAgent: MOBILE_CHROME_USER_AGENT
         })
       )
   );
@@ -106,10 +110,11 @@ async function bootstrap(): Promise<void> {
   browserManager.configureKeepAlive(60_000, 1, false);
 
   await loadRenderer();
-  logger.info('application', 'ProxyDesk SEO Tracker Lite ready.');
+  logger.info('application', 'PocketSEO Mobile ready.');
 }
 
 app.whenReady().then(() => {
+  app.setAppUserModelId(APP_ID);
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
 
   void bootstrap().catch((err) => {
