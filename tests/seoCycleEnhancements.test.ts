@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { SeoAutomationManager } from '../src/main/SeoAutomationManager';
 import type { BroadcastSearchResult } from '../src/shared/types/browser';
-import type { ProxyRecord, ReloadProxiesSummary } from '../src/shared/types/proxy';
+import type { ProxyRecord } from '../src/shared/types/proxy';
 import type { BrowserManager } from '../src/main/BrowserManager';
 import type { ProxyManager } from '../src/main/ProxyManager';
 
@@ -21,11 +21,13 @@ function proxy(id: string): ProxyRecord {
   };
 }
 
-function browserHarness(searches: string[]): BrowserManager {
+function browserHarness(searches: string[], assignments: string[]): BrowserManager {
   const tokens = new Map<number, number>();
 
   return {
-    async assignProxy() {},
+    async assignProxy(id: number, assignedProxy: ProxyRecord | null) {
+      assignments.push(`${id}:${assignedProxy?.id ?? 'none'}`);
+    },
     setBrowserKeepAlive() {},
     cancelMeasurementSession(id: number) {
       tokens.set(id, (tokens.get(id) ?? 0) + 1);
@@ -43,7 +45,7 @@ function browserHarness(searches: string[]): BrowserManager {
       query: string,
       target: string
     ): Promise<BroadcastSearchResult> {
-      searches.push(query);
+      searches.push(`${id}:${query}`);
       return {
         browserId: id,
         status: 'matched',
@@ -65,74 +67,87 @@ function browserHarness(searches: string[]): BrowserManager {
   } as unknown as BrowserManager;
 }
 
-async function waitFor(
-  predicate: () => boolean,
-  timeoutMs = 1000
-): Promise<void> {
+async function waitFor(predicate: () => boolean, timeoutMs = 1500): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
     if (Date.now() >= deadline) throw new Error('Timed out waiting for condition.');
-    await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 1));
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
 
-afterEach(() => {
-  vi.useRealTimers();
-});
-
-describe('v0.5.4 cycle enhancements', () => {
-  it('uses A, B, C then wraps to A, with every browser using the same cycle keyword', async () => {
+describe('v0.5.4 proxy-store cycle enhancements', () => {
+  it('does not start browser work until a validated stored proxy is available', async () => {
     const searches: string[] = [];
-    const liveProxy = proxy('cycle');
-    let fetchCalls = 0;
-    let preparedActivationCalls = 0;
+    const assignments: string[] = [];
+    const live = proxy('stored');
+    let takeCalls = 0;
+
+    const startStore = vi.fn();
+    const cycleValidation = vi.fn(() => {
+      throw new Error('cycle-start validation must not run');
+    });
 
     const proxyManager = {
       cancelCurrentValidation() {},
-      cancelPreparedValidation() {},
+      stopValidatedProxyStore() {},
       resetRotationHistory() {},
-      activatePreparedAssignments(
-        browserIds: number[],
-        onAssignment: (assignment: { browserId: number; proxy: ProxyRecord }) => void,
-        onProgress?: (checked: number, total: number, working: number, assigned: number, fetched: number) => void
-      ): ReloadProxiesSummary | null {
-        preparedActivationCalls += 1;
-        if (preparedActivationCalls === 1) return null;
-
-        onProgress?.(1, 1, 1, 1, 1);
-        for (const browserId of browserIds) {
-          onAssignment({ browserId, proxy: liveProxy });
-        }
-        return {
-          found: 1,
-          countryMatched: 1,
-          working: 1,
-          assignments: browserIds.map((browserId) => ({ browserId, proxy: liveProxy }))
-        };
+      startValidatedProxyStore: startStore,
+      getValidatedStoreSize: () => (takeCalls >= 3 ? 1 : 0),
+      takeValidatedProxy() {
+        takeCalls += 1;
+        return takeCalls >= 3 ? live : null;
       },
-      async fetchValidateAssignStreaming(
-        browserIds: number[],
-        onAssignment: (assignment: { browserId: number; proxy: ProxyRecord }) => void,
-        onProgress?: (checked: number, total: number, working: number, assigned: number, fetched: number) => void
-      ): Promise<ReloadProxiesSummary> {
-        fetchCalls += 1;
-        onProgress?.(1, 1, 1, browserIds.length, 1);
-        for (const browserId of browserIds) {
-          onAssignment({ browserId, proxy: liveProxy });
-        }
-        return {
-          found: 1,
-          countryMatched: 1,
-          working: 1,
-          assignments: browserIds.map((browserId) => ({ browserId, proxy: liveProxy }))
-        };
-      }
+      resetValidatedStoreForNextCohort() {},
+      fetchValidateAssignStreaming: cycleValidation
     } as unknown as ProxyManager;
 
     const manager = new SeoAutomationManager(
       proxyManager,
-      browserHarness(searches),
+      browserHarness(searches, assignments),
+      async () => [1]
+    );
+
+    await manager.start({
+      query: 'A, B',
+      targetWebsite: 'example.com',
+      intervalSec: 600,
+      browserCount: 1,
+      maxPages: 20
+    });
+
+    expect(startStore).toHaveBeenCalledWith(1);
+    expect(searches).toEqual([]);
+
+    await waitFor(() => searches.length === 1);
+
+    expect(assignments).toEqual(['1:stored']);
+    expect(searches).toEqual(['1:A']);
+    expect(cycleValidation).not.toHaveBeenCalled();
+
+    manager.stop();
+  });
+
+  it('uses the same keyword for every browser in a cycle and wraps A B C back to A', async () => {
+    const searches: string[] = [];
+    const assignments: string[] = [];
+    let serial = 0;
+
+    const proxyManager = {
+      cancelCurrentValidation() {},
+      stopValidatedProxyStore() {},
+      resetRotationHistory() {},
+      startValidatedProxyStore() {},
+      getValidatedStoreSize: () => 10,
+      takeValidatedProxy(browserId: number) {
+        serial += 1;
+        return proxy(`p-${browserId}-${serial}`);
+      },
+      resetValidatedStoreForNextCohort() {}
+    } as unknown as ProxyManager;
+
+    const manager = new SeoAutomationManager(
+      proxyManager,
+      browserHarness(searches, assignments),
       async () => [1, 2]
     );
 
@@ -145,80 +160,77 @@ describe('v0.5.4 cycle enhancements', () => {
     });
 
     await waitFor(() => searches.length >= 2);
-    expect(searches.slice(0, 2)).toEqual(['A', 'A']);
-    expect(manager.getState().currentQuery).toBe('A');
+    expect(searches.slice(0, 2)).toEqual(['1:A', '2:A']);
 
     await manager.runNow();
     await waitFor(() => searches.length >= 4);
-    expect(searches.slice(2, 4)).toEqual(['B', 'B']);
-    expect(manager.getState().currentQuery).toBe('B');
+    expect(searches.slice(2, 4)).toEqual(['1:B', '2:B']);
 
     await manager.runNow();
     await waitFor(() => searches.length >= 6);
-    expect(searches.slice(4, 6)).toEqual(['C', 'C']);
+    expect(searches.slice(4, 6)).toEqual(['1:C', '2:C']);
 
     await manager.runNow();
     await waitFor(() => searches.length >= 8);
-    expect(searches.slice(6, 8)).toEqual(['A', 'A']);
-
-    // Only cycle 1 needed the original on-demand validator; prepared pools
-    // supplied the later cycles.
-    expect(fetchCalls).toBe(1);
+    expect(searches.slice(6, 8)).toEqual(['1:A', '2:A']);
 
     manager.stop();
   });
 
-  it('starts next-session proxy validation 60 seconds before a scheduled cycle', async () => {
-    vi.useFakeTimers();
-
+  it('clears the stored pool after every five completed cycle assignments', async () => {
     const searches: string[] = [];
-    const liveProxy = proxy('prefetch');
-    const prepareNextCycle = vi.fn(async (_browserIds: number[]) => undefined);
+    const assignments: string[] = [];
+    let serial = 0;
+    const resetStore = vi.fn();
 
     const proxyManager = {
       cancelCurrentValidation() {},
-      cancelPreparedValidation() {},
+      stopValidatedProxyStore() {},
       resetRotationHistory() {},
-      prepareNextCycle,
-      activatePreparedAssignments() {
-        return null;
+      startValidatedProxyStore() {},
+      getValidatedStoreSize: () => 20,
+      takeValidatedProxy(browserId: number) {
+        serial += 1;
+        return proxy(`cycle-${serial}-browser-${browserId}`);
       },
-      async fetchValidateAssignStreaming(
-        browserIds: number[],
-        onAssignment: (assignment: { browserId: number; proxy: ProxyRecord }) => void
-      ): Promise<ReloadProxiesSummary> {
-        for (const browserId of browserIds) {
-          onAssignment({ browserId, proxy: liveProxy });
-        }
-        return {
-          found: 1,
-          countryMatched: 1,
-          working: 1,
-          assignments: browserIds.map((browserId) => ({ browserId, proxy: liveProxy }))
-        };
-      }
+      resetValidatedStoreForNextCohort: resetStore
     } as unknown as ProxyManager;
 
     const manager = new SeoAutomationManager(
       proxyManager,
-      browserHarness(searches),
+      browserHarness(searches, assignments),
       async () => [1]
     );
 
     await manager.start({
-      query: 'A, B',
+      query: 'A',
       targetWebsite: 'example.com',
-      intervalSec: 120,
+      intervalSec: 600,
       browserCount: 1,
       maxPages: 20
     });
 
-    await vi.advanceTimersByTimeAsync(59_999);
-    expect(prepareNextCycle).not.toHaveBeenCalled();
+    await waitFor(() => searches.length >= 1);
 
-    await vi.advanceTimersByTimeAsync(1);
-    expect(prepareNextCycle).toHaveBeenCalledTimes(1);
-    expect(prepareNextCycle).toHaveBeenCalledWith([1]);
+    for (let cycle = 2; cycle <= 5; cycle += 1) {
+      await manager.runNow();
+      await waitFor(() => searches.length >= cycle);
+    }
+
+    expect(manager.getState().cycleNumber).toBe(5);
+    expect(resetStore).toHaveBeenCalledTimes(1);
+
+    await manager.runNow();
+    await waitFor(() => searches.length >= 6);
+    expect(resetStore).toHaveBeenCalledTimes(1);
+
+    for (let cycle = 7; cycle <= 10; cycle += 1) {
+      await manager.runNow();
+      await waitFor(() => searches.length >= cycle);
+    }
+
+    expect(manager.getState().cycleNumber).toBe(10);
+    expect(resetStore).toHaveBeenCalledTimes(2);
 
     manager.stop();
   });
