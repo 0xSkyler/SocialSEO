@@ -47,7 +47,8 @@ jobs:
           $parts = @(
             "social-seo-4.4.2-patch\chunk-0.b64",
             "social-seo-4.4.2-patch\chunk-1.b64",
-            "social-seo-4.4.2-patch\chunk-2.b64",
+            "social-seo-4.4.2-patch\chunk-2a.b64",
+            "social-seo-4.4.2-patch\chunk-2b.b64",
             "social-seo-4.4.2-patch\chunk-3.b64",
             "social-seo-4.4.2-patch\chunk-4.b64"
           )
