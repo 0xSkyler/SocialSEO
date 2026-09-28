@@ -6,13 +6,11 @@ $pmPath = Join-Path $root "src\main\ProxyManager.ts"
 
 $wm = Get-Content $wmPath -Raw
 
-$oldConstants = @'
-const PROXY_RETRY_COOLDOWN_MS = 15_000;
+if ($wm -notmatch 'const PROXY_RETRY_COOLDOWN_MS = 15_000;') {
+  throw "Workspace retry constant not found."
+}
 
-function isProxyTransportFailure(error: unknown): boolean {
-'@
-
-$newConstants = @'
+$constantInsert = @'
 const PROXY_RETRY_COOLDOWN_MS = 15_000;
 const INITIAL_PAGE_LOAD_TIMEOUT_MS = 10_000;
 
@@ -20,28 +18,28 @@ function isInitialPageLoadTimeout(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes('page.goto') && message.includes(\`Timeout \${INITIAL_PAGE_LOAD_TIMEOUT_MS}ms exceeded\`);
 }
-
-function isProxyTransportFailure(error: unknown): boolean {
 '@
 
-if (-not $wm.Contains($oldConstants.Trim())) {
-  throw "Workspace constants patch point not found."
-}
-$wm = $wm.Replace($oldConstants.Trim(), $newConstants.Trim())
+$wm = [regex]::Replace(
+  $wm,
+  'const PROXY_RETRY_COOLDOWN_MS = 15_000;',
+  [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $constantInsert.TrimEnd() },
+  1
+)
 
-$oldGoto = "await page.goto(initialUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });"
-$newGoto = "await page.goto(initialUrl, { waitUntil: 'domcontentloaded', timeout: INITIAL_PAGE_LOAD_TIMEOUT_MS });"
-if (-not $wm.Contains($oldGoto)) {
+$gotoPattern = "await page\.goto\(initialUrl, \{ waitUntil: 'domcontentloaded', timeout: 45_000 \}\);"
+if ($wm -notmatch $gotoPattern) {
   throw "Initial page.goto patch point not found."
 }
-$wm = $wm.Replace($oldGoto, $newGoto)
+$wm = [regex]::Replace(
+  $wm,
+  $gotoPattern,
+  "await page.goto(initialUrl, { waitUntil: 'domcontentloaded', timeout: INITIAL_PAGE_LOAD_TIMEOUT_MS });",
+  1
+)
 
-$oldFailurePoint = @'
-      if (isProxyTransportFailure(error)) {
-'@
-
-$newFailurePoint = @'
-      if (isInitialPageLoadTimeout(error)) {
+$failureInsert = @'
+if (isInitialPageLoadTimeout(error)) {
         const replacement = this.proxies.replaceTimedOutProxyWithUnusedLive(id, message);
         if (replacement) {
           runtime.consecutiveProxyFailures = 0;
@@ -60,20 +58,22 @@ $newFailurePoint = @'
       if (isProxyTransportFailure(error)) {
 '@
 
-if (-not $wm.Contains($oldFailurePoint.Trim())) {
-  throw "Timeout recovery patch point not found."
+if ($wm -notmatch 'if \(isProxyTransportFailure\(error\)\) \{') {
+  throw "Proxy failure branch not found."
 }
-$wm = $wm.Replace($oldFailurePoint.Trim(), $newFailurePoint.Trim())
+$wm = [regex]::Replace(
+  $wm,
+  'if \(isProxyTransportFailure\(error\)\) \{',
+  [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $failureInsert.TrimEnd() },
+  1
+)
+
 Set-Content -Path $wmPath -Value $wm -Encoding utf8
 
 $pm = Get-Content $pmPath -Raw
 
-$oldChoose = @'
-  chooseReplacement(workspaceId: number): ProxyRecord | undefined {
-'@
-
-$newChoose = @'
-  replaceTimedOutProxyWithUnusedLive(workspaceId: number, reason: string): ProxyRecord | undefined {
+$proxyInsert = @'
+replaceTimedOutProxyWithUnusedLive(workspaceId: number, reason: string): ProxyRecord | undefined {
     const currentId = this.assignments.find((item) => item.workspaceId === workspaceId)?.proxyId;
     const leasedElsewhere = this.assignedProxyIds(workspaceId);
     const candidate = this.eligiblePool().find((proxy) =>
@@ -92,10 +92,15 @@ $newChoose = @'
   chooseReplacement(workspaceId: number): ProxyRecord | undefined {
 '@
 
-if (-not $pm.Contains($oldChoose.Trim())) {
-  throw "ProxyManager patch point not found."
+if ($pm -notmatch 'chooseReplacement\(workspaceId: number\): ProxyRecord \| undefined \{') {
+  throw "ProxyManager chooseReplacement patch point not found."
 }
-$pm = $pm.Replace($oldChoose.Trim(), $newChoose.Trim())
+$pm = [regex]::Replace(
+  $pm,
+  'chooseReplacement\(workspaceId: number\): ProxyRecord \| undefined \{',
+  [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $proxyInsert.TrimEnd() },
+  1
+)
 Set-Content -Path $pmPath -Value $pm -Encoding utf8
 
 $packagePath = Join-Path $root "package.json"
@@ -126,7 +131,6 @@ describe('10-second initial page timeout rotation', () => {
   });
 });
 '@
-
 Set-Content -Path (Join-Path $root "tests\timeoutRotation.test.ts") -Value $test -Encoding utf8
 
 $version = (Get-Content $packagePath -Raw | ConvertFrom-Json).version
