@@ -2,11 +2,18 @@ import { describe, expect, it } from 'vitest';
 import {
   normalizeAutomationIntervalSeconds,
   normalizeBrowserCount,
-  normalizeSeoMaxPages
+  normalizeSeoMaxPages,
+  parseAutomationKeywords
 } from '../src/shared/types/automation';
 import { BROWSER_IDS } from '../src/shared/types/browser';
 
 describe('SEO Tracker normalization', () => {
+  it('parses comma-separated keywords in cycle order', () => {
+    expect(parseAutomationKeywords(' A, B , ,C,D ')).toEqual(['A', 'B', 'C', 'D']);
+    expect(parseAutomationKeywords('single keyword')).toEqual(['single keyword']);
+    expect(parseAutomationKeywords(' , , ')).toEqual([]);
+  });
+
   it('normalizes rotation interval', () => {
     expect(normalizeAutomationIntervalSeconds(Number.NaN)).toBe(600);
     expect(normalizeAutomationIntervalSeconds(1)).toBe(30);
