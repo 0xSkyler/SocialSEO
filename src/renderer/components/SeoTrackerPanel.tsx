@@ -81,7 +81,7 @@ export function SeoTrackerPanel(): JSX.Element {
     <section className="seo-tracker">
       <div className="seo-tracker__title">
         <div>
-          <h1>ProxyDesk SEO Tracker Lite</h1>
+          <h1>PocketSEO Mobile</h1>
           <p>
             ProxyScrape API → validation → Google monitoring → challenge pause/resume →
             exact-host result opening → 2-scroll article hopping → rotation.
@@ -204,7 +204,7 @@ export function SeoTrackerPanel(): JSX.Element {
       <div className="tracker-note">
         Each proxy session continuously monitors the active keyword + website. Comma-separated
         keywords rotate one per cycle and wrap back to the first keyword. One minute before each
-        scheduled rotation, ProxyDesk starts validating the next proxy pool in the background.
+        scheduled rotation, PocketSEO Mobile starts validating the next proxy pool in the background.
         Google challenges pause the monitor instead of ending it; when normal results return in
         the same session, scanning resumes. The Target website is the interaction host by
         default. A matched result must either open that exact host and start Keep Alive, or
