@@ -39,8 +39,8 @@ export function SeoTrackerPanel(): JSX.Element {
   );
 
   async function start(): Promise<void> {
-    if (!query.trim() || !targetWebsite.trim()) {
-      pushToast('Enter both a keyword and target website.', 'error');
+    if (!query.split(',').some((keyword) => keyword.trim()) || !targetWebsite.trim()) {
+      pushToast('Enter at least one keyword and a target website.', 'error');
       return;
     }
 
@@ -98,12 +98,12 @@ export function SeoTrackerPanel(): JSX.Element {
 
       <div className="tracker-controls">
         <label>
-          Keyword
+          Keywords (comma separated)
           <input
             value={query}
             disabled={running}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="rmg cutting"
+            placeholder="keyword A, keyword B, keyword C"
           />
         </label>
 
@@ -185,6 +185,7 @@ export function SeoTrackerPanel(): JSX.Element {
       <div className="tracker-status">
         <span>Source <strong>ProxyScrape Free API</strong></span>
         <span>Cycle <strong>{automation?.cycleNumber ?? 0}</strong></span>
+        <span>Keyword <strong>{automation?.currentQuery || '—'}</strong></span>
         <span>Fetched <strong>{automation?.fetchedProxies ?? 0}</strong></span>
         <span>
           Validated <strong>{automation?.checkedProxies ?? 0}/{automation?.totalProxies ?? 0}</strong>
@@ -201,8 +202,10 @@ export function SeoTrackerPanel(): JSX.Element {
       )}
 
       <div className="tracker-note">
-        Each proxy session continuously monitors the saved keyword + website. Google
-        challenges pause the monitor instead of ending it; when normal results return in
+        Each proxy session continuously monitors the active keyword + website. Comma-separated
+        keywords rotate one per cycle and wrap back to the first keyword. One minute before each
+        scheduled rotation, ProxyDesk starts validating the next proxy pool in the background.
+        Google challenges pause the monitor instead of ending it; when normal results return in
         the same session, scanning resumes. The Target website is the interaction host by
         default. A matched result must either open that exact host and start Keep Alive, or
         report an explicit click failure. Browser sessions are isolated in memory and start
