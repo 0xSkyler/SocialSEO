@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { fitMobileViewport } from '../../shared/mobileProfile';
 import { useAppStore } from '../stores/appStore';
 
 interface Props {
@@ -23,12 +24,15 @@ export function BrowserPanel({ id }: Props): JSX.Element {
     const element = viewportRef.current;
     if (!element) return;
     const rect = element.getBoundingClientRect();
-    void window.app.browser.setBounds(id, {
-      x: Math.round(rect.x),
-      y: Math.round(rect.y),
-      width: Math.max(1, Math.round(rect.width)),
-      height: Math.max(1, Math.round(rect.height))
-    });
+    void window.app.browser.setBounds(
+      id,
+      fitMobileViewport({
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height
+      })
+    );
   }, [id]);
 
   useEffect(() => {
