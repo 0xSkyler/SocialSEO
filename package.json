@@ -1,9 +1,9 @@
 {
-  "name": "proxydesk",
-  "productName": "ProxyDesk",
-  "version": "0.5.4",
-  "description": "SEO test runner with DOM-ready navigation, strong Google result recognition, self-healing Keep Alive, and ProxyScrape rotation.",
-  "author": "ProxyDesk",
+  "name": "pocketseo-mobile",
+  "productName": "PocketSEO Mobile",
+  "version": "1.0.0",
+  "description": "Mobile Chrome-profile edition of the ProxyDesk SEO workflow with continuous validated proxy storage.",
+  "author": "PocketSEO Mobile",
   "license": "MIT",
   "repository": {
     "type": "git",
