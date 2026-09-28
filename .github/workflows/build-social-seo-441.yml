@@ -44,6 +44,14 @@ jobs:
           $version = (Get-Content "buildsrc\Social-SEO\package.json" -Raw | ConvertFrom-Json).version
           if ($version -ne "4.4.1") { throw "Expected version 4.4.1, got $version" }
 
+          $smokePath = "buildsrc\Social-SEO\scripts\final-smoke.cjs"
+          $smoke = Get-Content $smokePath -Raw
+          $old = "assert.equal(proxyValidatorSource.includes('private browserPromise?: Promise<PwBrowser>'), true);"
+          $new = "assert.equal(proxyValidatorSource.includes('private browserPromise?: Promise<PwBrowser>'), false);" + [Environment]::NewLine + "  assert.equal(proxyValidatorSource.includes('getPlaywright().request.newContext'), true);"
+          if (-not $smoke.Contains($old)) { throw "Expected inherited smoke assertion not found." }
+          $smoke = $smoke.Replace($old, $new)
+          Set-Content -Path $smokePath -Value $smoke -Encoding utf8
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
