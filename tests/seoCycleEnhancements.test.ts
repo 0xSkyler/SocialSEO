@@ -75,16 +75,22 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1500): Promise<void
   }
 }
 
-describe('v0.5.4 proxy-store cycle enhancements', () => {
-  it('does not start browser work until a validated stored proxy is available', async () => {
+describe('v0.5.4 per-rotation proxy buffer', () => {
+  it('waits for a full prepared zone before starting any browser work', async () => {
     const searches: string[] = [];
     const assignments: string[] = [];
-    const live = proxy('stored');
-    let takeCalls = 0;
+    const zone = [proxy('next-1'), proxy('next-2')];
+    let readyCount = 0;
 
-    const startStore = vi.fn();
-    const cycleValidation = vi.fn(() => {
-      throw new Error('cycle-start validation must not run');
+    const startStore = vi.fn(() => {
+      setTimeout(() => {
+        readyCount = 2;
+      }, 20);
+    });
+    const pauseStore = vi.fn();
+    const dropAssignments = vi.fn();
+    const resetForNext = vi.fn(() => {
+      readyCount = 0;
     });
 
     const proxyManager = {
@@ -92,13 +98,71 @@ describe('v0.5.4 proxy-store cycle enhancements', () => {
       stopValidatedProxyStore() {},
       resetRotationHistory() {},
       startValidatedProxyStore: startStore,
-      getValidatedStoreSize: () => (takeCalls >= 3 ? 1 : 0),
+      getValidatedStoreSize: () => readyCount,
+      pauseValidatedProxyStore: pauseStore,
+      dropCurrentAssignments: dropAssignments,
       takeValidatedProxy() {
-        takeCalls += 1;
-        return takeCalls >= 3 ? live : null;
+        const next = zone.shift() ?? null;
+        if (next) readyCount -= 1;
+        return next;
       },
-      resetValidatedStoreForNextCohort() {},
-      fetchValidateAssignStreaming: cycleValidation
+      resetValidatedStoreForNextRotation: resetForNext
+    } as unknown as ProxyManager;
+
+    const manager = new SeoAutomationManager(
+      proxyManager,
+      browserHarness(searches, assignments),
+      async () => [1, 2]
+    );
+
+    await manager.start({
+      query: 'A',
+      targetWebsite: 'example.com',
+      intervalSec: 600,
+      browserCount: 2,
+      maxPages: 20
+    });
+
+    expect(searches).toEqual([]);
+    expect(assignments).toEqual([]);
+
+    await waitFor(() => searches.length === 2);
+
+    expect(startStore).toHaveBeenCalledWith(2);
+    expect(pauseStore).toHaveBeenCalledTimes(1);
+    expect(dropAssignments).toHaveBeenCalledTimes(1);
+    expect(assignments).toEqual(['1:next-1', '2:next-2']);
+    expect(resetForNext).toHaveBeenCalledWith(2);
+
+    manager.stop();
+  });
+
+  it('erases the temporary zone and starts fresh preparation after every rotation', async () => {
+    const searches: string[] = [];
+    const assignments: string[] = [];
+    let serial = 0;
+    let readyCount = 1;
+
+    const resetForNext = vi.fn(() => {
+      readyCount = 1;
+    });
+
+    const proxyManager = {
+      cancelCurrentValidation() {},
+      stopValidatedProxyStore() {},
+      resetRotationHistory() {},
+      startValidatedProxyStore() {
+        readyCount = 1;
+      },
+      getValidatedStoreSize: () => readyCount,
+      pauseValidatedProxyStore() {},
+      dropCurrentAssignments() {},
+      takeValidatedProxy() {
+        readyCount = 0;
+        serial += 1;
+        return proxy(`rotation-${serial}`);
+      },
+      resetValidatedStoreForNextRotation: resetForNext
     } as unknown as ProxyManager;
 
     const manager = new SeoAutomationManager(
@@ -108,41 +172,57 @@ describe('v0.5.4 proxy-store cycle enhancements', () => {
     );
 
     await manager.start({
-      query: 'A, B',
+      query: 'A',
       targetWebsite: 'example.com',
       intervalSec: 600,
       browserCount: 1,
       maxPages: 20
     });
 
-    expect(startStore).toHaveBeenCalledWith(1);
-    expect(searches).toEqual([]);
+    await waitFor(() => searches.length >= 1);
+    expect(resetForNext).toHaveBeenCalledTimes(1);
 
-    await waitFor(() => searches.length === 1);
+    await manager.runNow();
+    await waitFor(() => searches.length >= 2);
+    expect(resetForNext).toHaveBeenCalledTimes(2);
 
-    expect(assignments).toEqual(['1:stored']);
-    expect(searches).toEqual(['1:A']);
-    expect(cycleValidation).not.toHaveBeenCalled();
+    await manager.runNow();
+    await waitFor(() => searches.length >= 3);
+    expect(resetForNext).toHaveBeenCalledTimes(3);
+
+    expect(assignments).toEqual([
+      '1:rotation-1',
+      '1:rotation-2',
+      '1:rotation-3'
+    ]);
 
     manager.stop();
   });
 
-  it('uses the same keyword for every browser in a cycle and wraps A B C back to A', async () => {
+  it('keeps the existing A B C keyword rotation unchanged', async () => {
     const searches: string[] = [];
     const assignments: string[] = [];
     let serial = 0;
+    let readyCount = 2;
 
     const proxyManager = {
       cancelCurrentValidation() {},
       stopValidatedProxyStore() {},
       resetRotationHistory() {},
-      startValidatedProxyStore() {},
-      getValidatedStoreSize: () => 10,
+      startValidatedProxyStore() {
+        readyCount = 2;
+      },
+      getValidatedStoreSize: () => readyCount,
+      pauseValidatedProxyStore() {},
+      dropCurrentAssignments() {},
       takeValidatedProxy(browserId: number) {
+        readyCount -= 1;
         serial += 1;
         return proxy(`p-${browserId}-${serial}`);
       },
-      resetValidatedStoreForNextCohort() {}
+      resetValidatedStoreForNextRotation() {
+        readyCount = 2;
+      }
     } as unknown as ProxyManager;
 
     const manager = new SeoAutomationManager(
@@ -173,64 +253,6 @@ describe('v0.5.4 proxy-store cycle enhancements', () => {
     await manager.runNow();
     await waitFor(() => searches.length >= 8);
     expect(searches.slice(6, 8)).toEqual(['1:A', '2:A']);
-
-    manager.stop();
-  });
-
-  it('clears the stored pool after every five completed cycle assignments', async () => {
-    const searches: string[] = [];
-    const assignments: string[] = [];
-    let serial = 0;
-    const resetStore = vi.fn();
-
-    const proxyManager = {
-      cancelCurrentValidation() {},
-      stopValidatedProxyStore() {},
-      resetRotationHistory() {},
-      startValidatedProxyStore() {},
-      getValidatedStoreSize: () => 20,
-      takeValidatedProxy(browserId: number) {
-        serial += 1;
-        return proxy(`cycle-${serial}-browser-${browserId}`);
-      },
-      resetValidatedStoreForNextCohort: resetStore
-    } as unknown as ProxyManager;
-
-    const manager = new SeoAutomationManager(
-      proxyManager,
-      browserHarness(searches, assignments),
-      async () => [1]
-    );
-
-    await manager.start({
-      query: 'A',
-      targetWebsite: 'example.com',
-      intervalSec: 600,
-      browserCount: 1,
-      maxPages: 20
-    });
-
-    await waitFor(() => searches.length >= 1);
-
-    for (let cycle = 2; cycle <= 5; cycle += 1) {
-      await manager.runNow();
-      await waitFor(() => searches.length >= cycle);
-    }
-
-    expect(manager.getState().cycleNumber).toBe(5);
-    expect(resetStore).toHaveBeenCalledTimes(1);
-
-    await manager.runNow();
-    await waitFor(() => searches.length >= 6);
-    expect(resetStore).toHaveBeenCalledTimes(1);
-
-    for (let cycle = 7; cycle <= 10; cycle += 1) {
-      await manager.runNow();
-      await waitFor(() => searches.length >= cycle);
-    }
-
-    expect(manager.getState().cycleNumber).toBe(10);
-    expect(resetStore).toHaveBeenCalledTimes(2);
 
     manager.stop();
   });
