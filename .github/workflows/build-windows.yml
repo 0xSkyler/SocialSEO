@@ -1,11 +1,11 @@
-# v0.5.4 DOM-ready + Keep Alive watchdog verification
+# PocketSEO Mobile 1.0.0 Windows verification
 name: Build Windows Installer
 
 on:
   push:
     branches:
       - main
-      - feature/loading-keepalive-watchdog-0.5.4
+      - app/pocketseo-mobile-1.0.0
     tags:
       - 'v*'
   pull_request:
@@ -67,15 +67,15 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ProxyDesk-v0.5.4-windows
-          path: release/MultiBrowserProxySetup.exe
+          name: PocketSEO-Mobile-v1.0.0-windows
+          path: release/PocketSEO-Mobile-Setup-1.0.0.exe
           if-no-files-found: error
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: release/MultiBrowserProxySetup.exe
+          files: release/PocketSEO-Mobile-Setup-1.0.0.exe
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
