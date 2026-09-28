@@ -34,7 +34,7 @@ win:
     - target: nsis
       arch:
         - x64
-  icon: build/icons/pocketseo-mobile.ico
+  icon: build/icons/pocketseo-mobile.png
   artifactName: PocketSEO-Mobile-Setup-1.0.0.${ext}
 
 nsis:
