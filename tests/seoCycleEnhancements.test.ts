@@ -180,14 +180,17 @@ describe('v0.5.4 per-rotation proxy buffer', () => {
     });
 
     await waitFor(() => searches.length >= 1);
+    await waitFor(() => resetForNext.mock.calls.length >= 1);
     expect(resetForNext).toHaveBeenCalledTimes(1);
 
     await manager.runNow();
     await waitFor(() => searches.length >= 2);
+    await waitFor(() => resetForNext.mock.calls.length >= 2);
     expect(resetForNext).toHaveBeenCalledTimes(2);
 
     await manager.runNow();
     await waitFor(() => searches.length >= 3);
+    await waitFor(() => resetForNext.mock.calls.length >= 3);
     expect(resetForNext).toHaveBeenCalledTimes(3);
 
     expect(assignments).toEqual([
