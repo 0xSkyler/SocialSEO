@@ -46,32 +46,30 @@ jobs:
 
           $smokePath = "buildsrc\Social-SEO\scripts\final-smoke.cjs"
           $smoke = Get-Content $smokePath -Raw
-          $old = "assert.equal(proxyValidatorSource.includes('private browserPromise?: Promise<PwBrowser>'), true);"
-          $new = "assert.equal(proxyValidatorSource.includes('private browserPromise?: Promise<PwBrowser>'), false);" + [Environment]::NewLine + "  assert.equal(proxyValidatorSource.includes('getPlaywright().request.newContext'), true);"
-          if (-not $smoke.Contains($old)) { throw "Expected inherited smoke assertion not found." }
-          $smoke = $smoke.Replace($old, $new)
+          $smoke = $smoke.Replace(
+            "assert.equal(proxyValidatorSource.includes('private browserPromise?: Promise<PwBrowser>'), true);",
+            "assert.equal(proxyValidatorSource.includes('private browserPromise?: Promise<PwBrowser>'), false);" + [Environment]::NewLine + "  assert.equal(proxyValidatorSource.includes('getPlaywright().request.newContext'), true);"
+          )
           Set-Content -Path $smokePath -Value $smoke -Encoding utf8
 
           $testPath = "buildsrc\Social-SEO\tests\lightweightArchitecture.test.ts"
           $test = Get-Content $testPath -Raw
-          $oldTest = @"
-  it('reuses one temporary Chromium process for concurrent proxy validation', () => {
-    const validator = read('src/main/ProxyValidator.ts');
-    expect(validator).toContain('private browserPromise?: Promise<PwBrowser>');
-    expect(validator).toContain('browser.newContext');
-    expect(validator).toContain('scheduleIdleClose');
-  });
-"@
-          $newTest = @"
-  it('uses lightweight request-only proxy validation', () => {
-    const validator = read('src/main/ProxyValidator.ts');
-    expect(validator).not.toContain('private browserPromise?: Promise<PwBrowser>');
-    expect(validator).not.toContain('browser.newContext');
-    expect(validator).toContain('getPlaywright().request.newContext');
-  });
-"@
-          if (-not $test.Contains($oldTest.Trim())) { throw "Expected inherited lightweight architecture test not found." }
-          $test = $test.Replace($oldTest.Trim(), $newTest.Trim())
+          $test = $test.Replace(
+            "  it('reuses one temporary Chromium process for concurrent proxy validation', () => {",
+            "  it('uses lightweight request-only proxy validation', () => {"
+          )
+          $test = $test.Replace(
+            "    expect(validator).toContain('private browserPromise?: Promise<PwBrowser>');",
+            "    expect(validator).not.toContain('private browserPromise?: Promise<PwBrowser>');"
+          )
+          $test = $test.Replace(
+            "    expect(validator).toContain('browser.newContext');",
+            "    expect(validator).not.toContain('browser.newContext');"
+          )
+          $test = $test.Replace(
+            "    expect(validator).toContain('scheduleIdleClose');",
+            "    expect(validator).toContain('getPlaywright().request.newContext');"
+          )
           Set-Content -Path $testPath -Value $test -Encoding utf8
 
       - name: Setup Node.js
