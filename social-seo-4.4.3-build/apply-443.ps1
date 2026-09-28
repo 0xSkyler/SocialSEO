@@ -16,7 +16,7 @@ const INITIAL_PAGE_LOAD_TIMEOUT_MS = 10_000;
 
 function isInitialPageLoadTimeout(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes('page.goto') && message.includes(\`Timeout \${INITIAL_PAGE_LOAD_TIMEOUT_MS}ms exceeded\`);
+  return message.includes('page.goto') && message.includes('Timeout ' + INITIAL_PAGE_LOAD_TIMEOUT_MS + 'ms exceeded');
 }
 '@
 
