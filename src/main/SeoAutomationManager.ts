@@ -99,7 +99,7 @@ export class SeoAutomationManager extends EventEmitter {
     this.stopTimerOnly();
     this.stopPrevalidationTimerOnly();
     this.proxyManager.cancelCurrentValidation();
-    this.proxyManager.cancelPreparedValidation();
+    this.proxyManager.cancelPreparedValidation?.();
     this.proxyManager.resetRotationHistory();
     this.generation += 1;
     this.pendingCycle = false;
@@ -184,7 +184,7 @@ export class SeoAutomationManager extends EventEmitter {
     this.generation += 1;
     this.pendingCycle = false;
     this.proxyManager.cancelCurrentValidation();
-    this.proxyManager.cancelPreparedValidation();
+    this.proxyManager.cancelPreparedValidation?.();
     this.stopTimerOnly();
     this.stopPrevalidationTimerOnly();
 
@@ -246,7 +246,7 @@ export class SeoAutomationManager extends EventEmitter {
         'proxy',
         `Starting next-cycle proxy validation ${Math.max(0, Math.round((Date.parse(this.state.nextCycleAt ?? '') - Date.now()) / 1000))}s before rotation.`
       );
-      void this.proxyManager.prepareNextCycle(browserIds);
+      void this.proxyManager.prepareNextCycle?.(browserIds);
     }, delayMs);
   }
 
@@ -333,17 +333,17 @@ export class SeoAutomationManager extends EventEmitter {
         await this.browserManager.assignProxy(id, null);
       }
 
-      const prepared = this.proxyManager.activatePreparedAssignments(
+      const prepared = this.proxyManager.activatePreparedAssignments?.(
         browserIds,
         onAssignment,
         onProgress
-      );
+      ) ?? null;
 
       if (!prepared) {
         // If T-60 preparation did not finish (or produced no live proxy), keep
         // the exact v0.5.4 behavior as the fallback: validate and stream live
         // assignments immediately during the cycle.
-        this.proxyManager.cancelPreparedValidation();
+        this.proxyManager.cancelPreparedValidation?.();
         await this.proxyManager.fetchValidateAssignStreaming(
           browserIds,
           onAssignment,
