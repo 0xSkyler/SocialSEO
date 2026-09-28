@@ -290,59 +290,81 @@ export class SeoAutomationManager extends EventEmitter {
     };
 
     try {
-      // Stop the previous cycle's automation first, but keep its proxy routing
-      // in place while this browser waits for a new stored proxy. The browser
-      // does not start any new SEO work until a validated proxy is assigned.
+      // Stop only the previous cycle's automation. Its existing proxy remains
+      // configured until the already-prepared next proxy is swapped in, so
+      // there is no deliberate direct-network window between rotations.
       for (const id of browserIds) {
         if (!this.isCurrent(generation)) return;
         this.browserManager.cancelMeasurementSession(id);
         this.browserManager.setBrowserKeepAlive(id, false, false);
       }
 
-      if (typeof this.proxyManager.takeValidatedProxy === 'function') {
-        let assigned = 0;
-
-        const assignmentTasks = browserIds.map(async (browserId) => {
-          while (
-            this.isCurrent(generation) &&
-            this.state.cycleNumber === cycleNumber
-          ) {
-            const proxy = this.proxyManager.takeValidatedProxy(browserId);
-            if (!proxy) {
-              const stored = this.proxyManager.getValidatedStoreSize?.() ?? 0;
-              if (stored !== this.state.liveProxies) {
-                this.state = { ...this.state, liveProxies: stored };
-                this.emitState();
-              }
-              await sleep(100);
-              continue;
-            }
-
-            assigned += 1;
-            this.state = {
-              ...this.state,
-              assignedBrowsers: assigned,
-              liveProxies: this.proxyManager.getValidatedStoreSize?.() ?? 0
-            };
+      if (
+        typeof this.proxyManager.takeValidatedProxy === 'function' &&
+        typeof this.proxyManager.pauseValidatedProxyStore === 'function'
+      ) {
+        // The temporary zone is built DURING the previous cycle. A rotation
+        // never begins browser work until there is one validated proxy ready
+        // for every browser.
+        while (
+          this.isCurrent(generation) &&
+          this.state.cycleNumber === cycleNumber &&
+          (this.proxyManager.getValidatedStoreSize?.() ?? 0) < browserIds.length
+        ) {
+          const stored = this.proxyManager.getValidatedStoreSize?.() ?? 0;
+          if (stored !== this.state.liveProxies) {
+            this.state = { ...this.state, liveProxies: stored };
             this.emitState();
-
-            await this.handleAssignment(
-              generation,
-              cycleNumber,
-              { browserId, proxy },
-              query,
-              targetWebsite,
-              controlledTestHost,
-              maxPages
-            );
-            return;
           }
+          await sleep(100);
+        }
+
+        if (!this.isCurrent(generation) || this.state.cycleNumber !== cycleNumber) return;
+
+        // Freeze the completed next-rotation zone so no newly validated proxy
+        // can slip into the current rotation while assignments are happening.
+        this.proxyManager.pauseValidatedProxyStore();
+        this.proxyManager.dropCurrentAssignments?.();
+
+        let assigned = 0;
+        const assignmentTasks = browserIds.map(async (browserId) => {
+          const proxy = this.proxyManager.takeValidatedProxy(browserId);
+          if (!proxy) {
+            throw new Error(`Prepared proxy zone did not contain a proxy for Browser ${browserId}.`);
+          }
+
+          assigned += 1;
+          this.state = {
+            ...this.state,
+            assignedBrowsers: assigned,
+            liveProxies: this.proxyManager.getValidatedStoreSize?.() ?? 0
+          };
+          this.emitState();
+
+          await this.handleAssignment(
+            generation,
+            cycleNumber,
+            { browserId, proxy },
+            query,
+            targetWebsite,
+            controlledTestHost,
+            maxPages
+          );
         });
 
-        await Promise.allSettled(assignmentTasks);
+        await Promise.all(assignmentTasks);
+
+        // The prepared zone is single-use. Drop every unassigned proxy/check
+        // from it immediately, then start a completely fresh validation run
+        // for the NEXT rotation while this cycle is working.
+        this.proxyManager.resetValidatedStoreForNextRotation?.(browserIds.length);
+        this.state = {
+          ...this.state,
+          liveProxies: this.proxyManager.getValidatedStoreSize?.() ?? 0
+        };
+        this.emitState();
       } else {
-        // Compatibility path for older test doubles. The real ProxyManager
-        // always exposes the continuous validated store.
+        // Compatibility path for older test doubles only.
         await this.proxyManager.fetchValidateAssignStreaming(
           browserIds,
           onAssignment,
@@ -353,14 +375,6 @@ export class SeoAutomationManager extends EventEmitter {
       await Promise.allSettled(seoTasks);
 
       if (!this.isCurrent(generation)) return;
-
-      // Cycles 1-5 share one validated-store cohort. As soon as cycle 5 has
-      // received its proxies, delete every remaining stored endpoint and begin
-      // continuously building a fresh store while cycle 5 is still running.
-      // The same happens after cycles 10, 15, ...
-      if (cycleNumber % 5 === 0) {
-        this.proxyManager.resetValidatedStoreForNextCohort?.();
-      }
 
       this.state = {
         ...this.state,
