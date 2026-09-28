@@ -76,6 +76,90 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1500): Promise<void
 }
 
 describe('v0.5.4 per-rotation proxy buffer', () => {
+  it('starts next-cycle validation immediately after current proxies are assigned, before Google work starts', async () => {
+    const events: string[] = [];
+    const live = proxy('cycle-1');
+    let readyCount = 1;
+    let token = 0;
+
+    const proxyManager = {
+      cancelCurrentValidation() {},
+      stopValidatedProxyStore() {},
+      resetRotationHistory() {},
+      startValidatedProxyStore() {
+        readyCount = 1;
+      },
+      getValidatedStoreSize: () => readyCount,
+      pauseValidatedProxyStore() {},
+      dropCurrentAssignments() {},
+      takeValidatedProxy() {
+        readyCount = 0;
+        return live;
+      },
+      resetValidatedStoreForNextRotation() {
+        events.push('prepare-next');
+        readyCount = 1;
+      }
+    } as unknown as ProxyManager;
+
+    const browserManager = {
+      async assignProxy() {
+        events.push('assigned');
+      },
+      setBrowserKeepAlive() {},
+      cancelMeasurementSession() {},
+      startMeasurementSession() {
+        token += 1;
+        return token;
+      },
+      isMeasurementSessionCurrent(_id: number, current: number) {
+        return current === token;
+      },
+      async broadcastSearch(
+        id: number,
+        _query: string,
+        target: string
+      ): Promise<BroadcastSearchResult> {
+        events.push('google-work');
+        return {
+          browserId: id,
+          status: 'matched',
+          landedUrl: `https://${target}/article`,
+          matchedUrl: `https://${target}/article`,
+          matchedTitle: 'A',
+          interactionStatus: 'opened',
+          monitoring: true,
+          ranAt: new Date().toISOString()
+        };
+      },
+      async clickControlledGoogleResult() {
+        return true;
+      },
+      startControlledKeepAlive() {},
+      async waitForGoogleRecovery() {
+        return true;
+      }
+    } as unknown as BrowserManager;
+
+    const manager = new SeoAutomationManager(proxyManager, browserManager, async () => [1]);
+
+    await manager.start({
+      query: 'A',
+      targetWebsite: 'example.com',
+      intervalSec: 600,
+      browserCount: 1,
+      maxPages: 20
+    });
+
+    await waitFor(() => events.includes('google-work'));
+
+    expect(events.indexOf('assigned')).toBeGreaterThanOrEqual(0);
+    expect(events.indexOf('prepare-next')).toBeGreaterThan(events.indexOf('assigned'));
+    expect(events.indexOf('google-work')).toBeGreaterThan(events.indexOf('prepare-next'));
+
+    manager.stop();
+  });
+
   it('waits for a full prepared zone before starting any browser work', async () => {
     const searches: string[] = [];
     const assignments: string[] = [];
