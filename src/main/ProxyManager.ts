@@ -15,6 +15,14 @@ const VALIDATION_TIMEOUT_MS = 4000;
 const MAX_CONCURRENT_CHECKS = 32;
 const IP_CHECK_URL = 'https://api.ipify.org?format=json';
 
+interface PreparedProxyPool {
+  fetched: number;
+  checked: number;
+  total: number;
+  live: ProxyRecord[];
+  preparedAt: string;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export declare interface ProxyManager {
   on(event: 'assignmentsChanged', listener: (summary: ReloadProxiesSummary) => void): this;
@@ -28,12 +36,15 @@ export class ProxyManager extends EventEmitter {
   private allProxies = new Map<string, ProxyRecord>();
   private assignments = new Map<number, ProxyRecord | null>();
   private validationController: AbortController | null = null;
+  private prevalidationController: AbortController | null = null;
+  private preparedPool: PreparedProxyPool | null = null;
   private usedProxyIds = new Set<string>();
 
   async init(): Promise<void> {
     this.allProxies.clear();
     this.assignments.clear();
     this.usedProxyIds.clear();
+    this.cancelPreparedValidation();
     logger.info('proxy', 'Proxy manager ready: ProxyScrape API source, session-only state.');
   }
 
@@ -52,6 +63,213 @@ export class ProxyManager extends EventEmitter {
   cancelCurrentValidation(): void {
     this.validationController?.abort();
     this.validationController = null;
+  }
+
+  cancelPreparedValidation(): void {
+    this.prevalidationController?.abort();
+    this.prevalidationController = null;
+    this.preparedPool = null;
+  }
+
+  /**
+   * Background preparation for the next rotation.
+   *
+   * This does not touch the currently assigned browser proxies. It fetches a
+   * fresh ProxyScrape list and validates candidates in the background, stopping
+   * early once enough previously-unused live proxies have been found for the
+   * next cycle. The prepared pool is activated only when the next cycle starts.
+   */
+  async prepareNextCycle(browserIds: number[]): Promise<void> {
+    this.cancelPreparedValidation();
+    if (browserIds.length === 0) return;
+
+    const controller = new AbortController();
+    this.prevalidationController = controller;
+
+    try {
+      const raw = await fetchProxyScrapeFreeList({
+        limit: 2000,
+        timeoutFilterMs: VALIDATION_TIMEOUT_MS,
+        requestTimeoutMs: 15_000,
+        signal: controller.signal
+      });
+
+      if (controller.signal.aborted) return;
+
+      const parsed = parseBulkText(raw, 'ProxyScrape Free API');
+      const replacement = dedupeProxies(parsed.proxies);
+      if (replacement.length === 0) {
+        logger.warn('proxy', 'Next-cycle prevalidation found no usable ProxyScrape entries.');
+        return;
+      }
+
+      const usedSnapshot = new Set(this.usedProxyIds);
+      const currentAssignmentIds = new Set(
+        Array.from(this.assignments.values())
+          .filter((proxy): proxy is ProxyRecord => Boolean(proxy))
+          .map((proxy) => proxy.id)
+      );
+
+      const candidates = [
+        ...replacement.filter(
+          (proxy) => !usedSnapshot.has(proxy.id) && !currentAssignmentIds.has(proxy.id)
+        ),
+        ...replacement.filter(
+          (proxy) => !usedSnapshot.has(proxy.id) && currentAssignmentIds.has(proxy.id)
+        ),
+        ...replacement.filter((proxy) => usedSnapshot.has(proxy.id))
+      ];
+
+      const targetCount = browserIds.length;
+      const liveUnused: ProxyRecord[] = [];
+      const liveUsed: ProxyRecord[] = [];
+      let cursor = 0;
+      let checked = 0;
+
+      const worker = async (): Promise<void> => {
+        while (!controller.signal.aborted) {
+          if (liveUnused.length >= targetCount) return;
+
+          const index = cursor++;
+          if (index >= candidates.length) return;
+
+          const candidate = { ...candidates[index], status: 'checking' as const };
+          const result = await ProxyValidator.validate(candidate, {
+            timeoutMs: VALIDATION_TIMEOUT_MS,
+            ipCheckUrl: IP_CHECK_URL,
+            signal: controller.signal
+          });
+
+          if (controller.signal.aborted) return;
+
+          checked += 1;
+          const validated: ProxyRecord = {
+            ...candidate,
+            status: result.status,
+            latencyMs: result.latencyMs,
+            lastChecked: result.checkedAt,
+            successCount: candidate.successCount + (result.status === 'working' ? 1 : 0),
+            failureCount: candidate.failureCount + (result.status === 'working' ? 0 : 1)
+          };
+          validated.score = scoreProxy(validated);
+
+          if (validated.status === 'working') {
+            if (usedSnapshot.has(validated.id)) liveUsed.push(validated);
+            else liveUnused.push(validated);
+          }
+        }
+      };
+
+      const workers = Array.from(
+        { length: Math.min(MAX_CONCURRENT_CHECKS, candidates.length) },
+        () => worker()
+      );
+      await Promise.all(workers);
+
+      if (controller.signal.aborted || this.prevalidationController !== controller) return;
+
+      const live = [...liveUnused, ...liveUsed];
+      this.preparedPool = {
+        fetched: replacement.length,
+        checked,
+        total: candidates.length,
+        live,
+        preparedAt: new Date().toISOString()
+      };
+
+      logger.info(
+        'proxy',
+        `Prepared next cycle: ${liveUnused.length} unused live proxy/proxies, ` +
+          `${liveUsed.length} previously-used live proxy/proxies after ${checked} checks.`
+      );
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        logger.warn('proxy', `Next-cycle prevalidation failed: ${(err as Error).message}`);
+      }
+    } finally {
+      if (this.prevalidationController === controller) {
+        this.prevalidationController = null;
+      }
+    }
+  }
+
+  /**
+   * Activates the already-validated background pool without performing any
+   * network validation. Returns null when no prepared live pool is available,
+   * allowing the caller to fall back to the original streaming validation.
+   */
+  activatePreparedAssignments(
+    browserIds: number[],
+    onAssignment: (assignment: ProxyAssignment, checked: number, total: number) => void,
+    onProgress?: (checked: number, total: number, working: number, assigned: number, fetched: number) => void
+  ): ReloadProxiesSummary | null {
+    const prepared = this.preparedPool;
+    if (!prepared || prepared.live.length === 0) return null;
+
+    const previousAssignments = new Map(this.assignments);
+    let eligible = prepared.live.filter((proxy) => !this.usedProxyIds.has(proxy.id));
+
+    // Preserve the original v0.5.4 rotation rule: only reset history when all
+    // currently-live prepared endpoints have already been consumed.
+    if (
+      eligible.length === 0 &&
+      prepared.live.length > 0 &&
+      prepared.live.every((proxy) => this.usedProxyIds.has(proxy.id))
+    ) {
+      this.usedProxyIds.clear();
+      eligible = [...prepared.live];
+    }
+
+    if (eligible.length === 0) return null;
+
+    this.allProxies.clear();
+    this.assignments.clear();
+    for (const proxy of prepared.live) this.allProxies.set(proxy.id, proxy);
+
+    const remaining = [...eligible];
+    let assigned = 0;
+
+    onProgress?.(
+      prepared.checked,
+      prepared.total,
+      prepared.live.length,
+      0,
+      prepared.fetched
+    );
+
+    for (const browserId of browserIds) {
+      if (remaining.length === 0) break;
+
+      const previousId = previousAssignments.get(browserId)?.id;
+      const index = remaining.findIndex((proxy) => proxy.id !== previousId);
+      const selectedIndex = index >= 0 ? index : 0;
+      const [proxy] = remaining.splice(selectedIndex, 1);
+
+      this.assignments.set(browserId, proxy);
+      this.usedProxyIds.add(proxy.id);
+      assigned += 1;
+      onAssignment({ browserId, proxy }, prepared.checked, prepared.total);
+    }
+
+    const summary = this.summary(browserIds, prepared.fetched, prepared.live.length);
+    this.preparedPool = null;
+
+    onProgress?.(
+      prepared.checked,
+      prepared.total,
+      prepared.live.length,
+      assigned,
+      prepared.fetched
+    );
+    this.emit('assignmentsChanged', summary);
+
+    logger.info(
+      'proxy',
+      `Activated prevalidated proxy pool prepared at ${prepared.preparedAt}; ` +
+        `${assigned}/${browserIds.length} browser(s) assigned without revalidation.`
+    );
+
+    return summary;
   }
 
   /**
@@ -190,10 +408,10 @@ export class ProxyManager extends EventEmitter {
     ) {
       this.usedProxyIds.clear();
       for (const browserId of Array.from(remainingBrowsers)) {
-        const eligible = live.filter((proxy) => !usedThisCycle.has(proxy.id));
-        if (eligible.length === 0) break;
+        const available = live.filter((proxy) => !usedThisCycle.has(proxy.id));
+        if (available.length === 0) break;
         const previousId = previousAssignments.get(browserId)?.id;
-        const proxy = eligible.find((candidate) => candidate.id !== previousId) ?? eligible[0];
+        const proxy = available.find((candidate) => candidate.id !== previousId) ?? available[0];
         this.assignments.set(browserId, proxy);
         remainingBrowsers.delete(browserId);
         usedThisCycle.add(proxy.id);
