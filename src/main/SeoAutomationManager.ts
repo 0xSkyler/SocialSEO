@@ -35,10 +35,8 @@ export declare interface SeoAutomationManager {
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class SeoAutomationManager extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
-  private prevalidationTimer: NodeJS.Timeout | null = null;
   private generation = 0;
   private pendingCycle = false;
-  private readonly prevalidationLeadMs = 60_000;
 
   private state: SeoAutomationState = {
     running: false,
@@ -97,9 +95,8 @@ export class SeoAutomationManager extends EventEmitter {
     const intervalSec = normalizeAutomationIntervalSeconds(config.intervalSec);
 
     this.stopTimerOnly();
-    this.stopPrevalidationTimerOnly();
     this.proxyManager.cancelCurrentValidation();
-    this.proxyManager.cancelPreparedValidation?.();
+    this.proxyManager.stopValidatedProxyStore?.();
     this.proxyManager.resetRotationHistory();
     this.generation += 1;
     this.pendingCycle = false;
@@ -162,6 +159,10 @@ export class SeoAutomationManager extends EventEmitter {
     };
     this.emitState();
 
+    // Start one independent validation worker for the whole automation
+    // session. Cycle execution never launches its own validation job.
+    this.proxyManager.startValidatedProxyStore?.(browserIds.length);
+
     this.timer = setInterval(() => {
       if (!this.state.running) return;
       this.state = {
@@ -170,12 +171,8 @@ export class SeoAutomationManager extends EventEmitter {
       };
       this.emitState();
       void this.requestCycle();
-      this.schedulePrevalidation();
     }, intervalSec * 1000);
 
-    // Cycle 1 starts immediately as in v0.5.4. For every scheduled cycle after
-    // that, begin preparing the next proxy pool exactly one minute beforehand.
-    this.schedulePrevalidation();
     void this.requestCycle();
     return this.getState();
   }
@@ -184,9 +181,8 @@ export class SeoAutomationManager extends EventEmitter {
     this.generation += 1;
     this.pendingCycle = false;
     this.proxyManager.cancelCurrentValidation();
-    this.proxyManager.cancelPreparedValidation?.();
+    this.proxyManager.stopValidatedProxyStore?.();
     this.stopTimerOnly();
-    this.stopPrevalidationTimerOnly();
 
     for (const id of this.state.browserIds) {
       try {
@@ -210,7 +206,6 @@ export class SeoAutomationManager extends EventEmitter {
   async runNow(): Promise<SeoAutomationState> {
     if (!this.state.running) throw new Error('Start SEO Tracker first.');
     await this.requestCycle();
-    this.schedulePrevalidation();
     return this.getState();
   }
 
@@ -218,36 +213,6 @@ export class SeoAutomationManager extends EventEmitter {
     if (!this.timer) return;
     clearInterval(this.timer);
     this.timer = null;
-  }
-
-  private stopPrevalidationTimerOnly(): void {
-    if (!this.prevalidationTimer) return;
-    clearTimeout(this.prevalidationTimer);
-    this.prevalidationTimer = null;
-  }
-
-  private schedulePrevalidation(): void {
-    this.stopPrevalidationTimerOnly();
-    if (!this.state.running || this.state.browserIds.length === 0 || !this.state.nextCycleAt) return;
-
-    const nextCycleAt = Date.parse(this.state.nextCycleAt);
-    if (!Number.isFinite(nextCycleAt)) return;
-
-    // For intervals shorter than one minute there is no possible T-60 point,
-    // so preparation starts immediately while preserving the user's interval.
-    const delayMs = Math.max(0, nextCycleAt - Date.now() - this.prevalidationLeadMs);
-
-    this.prevalidationTimer = setTimeout(() => {
-      this.prevalidationTimer = null;
-      if (!this.state.running) return;
-
-      const browserIds = [...this.state.browserIds];
-      logger.info(
-        'proxy',
-        `Starting next-cycle proxy validation ${Math.max(0, Math.round((Date.parse(this.state.nextCycleAt ?? '') - Date.now()) / 1000))}s before rotation.`
-      );
-      void this.proxyManager.prepareNextCycle?.(browserIds);
-    }, delayMs);
   }
 
   private emitState(): void {
@@ -325,25 +290,59 @@ export class SeoAutomationManager extends EventEmitter {
     };
 
     try {
-      // Every rotation starts from a clean browser routing state.
+      // Stop the previous cycle's automation first, but keep its proxy routing
+      // in place while this browser waits for a new stored proxy. The browser
+      // does not start any new SEO work until a validated proxy is assigned.
       for (const id of browserIds) {
         if (!this.isCurrent(generation)) return;
         this.browserManager.cancelMeasurementSession(id);
         this.browserManager.setBrowserKeepAlive(id, false, false);
-        await this.browserManager.assignProxy(id, null);
       }
 
-      const prepared = this.proxyManager.activatePreparedAssignments?.(
-        browserIds,
-        onAssignment,
-        onProgress
-      ) ?? null;
+      if (typeof this.proxyManager.takeValidatedProxy === 'function') {
+        let assigned = 0;
 
-      if (!prepared) {
-        // If T-60 preparation did not finish (or produced no live proxy), keep
-        // the exact v0.5.4 behavior as the fallback: validate and stream live
-        // assignments immediately during the cycle.
-        this.proxyManager.cancelPreparedValidation?.();
+        const assignmentTasks = browserIds.map(async (browserId) => {
+          while (
+            this.isCurrent(generation) &&
+            this.state.cycleNumber === cycleNumber
+          ) {
+            const proxy = this.proxyManager.takeValidatedProxy(browserId);
+            if (!proxy) {
+              const stored = this.proxyManager.getValidatedStoreSize?.() ?? 0;
+              if (stored !== this.state.liveProxies) {
+                this.state = { ...this.state, liveProxies: stored };
+                this.emitState();
+              }
+              await sleep(100);
+              continue;
+            }
+
+            assigned += 1;
+            this.state = {
+              ...this.state,
+              assignedBrowsers: assigned,
+              liveProxies: this.proxyManager.getValidatedStoreSize?.() ?? 0
+            };
+            this.emitState();
+
+            await this.handleAssignment(
+              generation,
+              cycleNumber,
+              { browserId, proxy },
+              query,
+              targetWebsite,
+              controlledTestHost,
+              maxPages
+            );
+            return;
+          }
+        });
+
+        await Promise.allSettled(assignmentTasks);
+      } else {
+        // Compatibility path for older test doubles. The real ProxyManager
+        // always exposes the continuous validated store.
         await this.proxyManager.fetchValidateAssignStreaming(
           browserIds,
           onAssignment,
@@ -354,6 +353,15 @@ export class SeoAutomationManager extends EventEmitter {
       await Promise.allSettled(seoTasks);
 
       if (!this.isCurrent(generation)) return;
+
+      // Cycles 1-5 share one validated-store cohort. As soon as cycle 5 has
+      // received its proxies, delete every remaining stored endpoint and begin
+      // continuously building a fresh store while cycle 5 is still running.
+      // The same happens after cycles 10, 15, ...
+      if (cycleNumber % 5 === 0) {
+        this.proxyManager.resetValidatedStoreForNextCohort?.();
+      }
+
       this.state = {
         ...this.state,
         cycleInProgress: false,
