@@ -12,7 +12,7 @@ function makeProxy(id: string): ProxyRecord {
     port: 8080,
     protocol: 'http',
     countryVerified: false,
-    sources: ['ProxyScrape Free API'],
+    sources: ['All Working API'],
     status: 'working',
     score: 100,
     successCount: 1,
@@ -35,20 +35,20 @@ async function waitForCycle(manager: SeoAutomationManager): Promise<void> {
 }
 
 describe('SeoAutomationManager continuous measurement', () => {
-  it('starts monitoring as soon as a live proxy is assigned without waiting for validation to finish', async () => {
+  it('starts monitoring after a directly fetched proxy is assigned', async () => {
     const events: string[] = [];
     const searches: Array<{ id: number; query: string; target: string; maxPages: number }> = [];
     const tokens = new Map<number, number>();
     const proxy = makeProxy('p1');
 
     const proxyManager = {
-      cancelCurrentValidation() {
+      cancelCurrentFetch() {
         events.push('cancel-validation');
       },
       resetRotationHistory() {
         events.push('reset-history');
       },
-      async fetchValidateAssignStreaming(
+      async fetchAssignDirect(
         browserIds: number[],
         onAssignment: (assignment: { browserId: number; proxy: ProxyRecord }) => void,
         onProgress?: (checked: number, total: number, working: number, assigned: number, fetched: number) => void
@@ -58,7 +58,7 @@ describe('SeoAutomationManager continuous measurement', () => {
         onProgress?.(1, 1, 1, 1, 1);
         await Promise.resolve();
         await Promise.resolve();
-        events.push('validation-finished');
+        events.push('fetch-finished');
         return {
           found: 1,
           countryMatched: 1,
@@ -135,9 +135,7 @@ describe('SeoAutomationManager continuous measurement', () => {
     await waitForCycle(manager);
     const result = await observed;
 
-    expect(events).toContain('reset-history');
     expect(events.indexOf('search-1')).toBeGreaterThan(events.indexOf('assign-1'));
-    expect(events.indexOf('search-1')).toBeLessThan(events.indexOf('validation-finished'));
     expect(searches[0]).toEqual({
       id: 1,
       query: 'saved keyword',
@@ -159,9 +157,9 @@ describe('SeoAutomationManager continuous measurement', () => {
     let recoveryCount = 0;
 
     const proxyManager = {
-      cancelCurrentValidation() {},
+      cancelCurrentFetch() {},
       resetRotationHistory() {},
-      async fetchValidateAssignStreaming(
+      async fetchAssignDirect(
         browserIds: number[],
         onAssignment: (assignment: { browserId: number; proxy: ProxyRecord }) => void
       ): Promise<ReloadProxiesSummary> {
@@ -257,9 +255,9 @@ describe('SeoAutomationManager continuous measurement', () => {
     const events: string[] = [];
 
     const proxyManager = {
-      cancelCurrentValidation() {},
+      cancelCurrentFetch() {},
       resetRotationHistory() {},
-      async fetchValidateAssignStreaming(
+      async fetchAssignDirect(
         browserIds: number[],
         onAssignment: (assignment: { browserId: number; proxy: ProxyRecord }) => void
       ): Promise<ReloadProxiesSummary> {
@@ -344,7 +342,7 @@ describe('SeoAutomationManager continuous measurement', () => {
 
   it('rejects an interaction-host override that differs from the Target website', async () => {
     const manager = new SeoAutomationManager(
-      { cancelCurrentValidation() {}, resetRotationHistory() {} } as unknown as ProxyManager,
+      { cancelCurrentFetch() {}, resetRotationHistory() {} } as unknown as ProxyManager,
       {} as BrowserManager,
       async () => [1]
     );
@@ -368,9 +366,9 @@ describe('SeoAutomationManager continuous measurement', () => {
     const events: string[] = [];
 
     const proxyManager = {
-      cancelCurrentValidation() {},
+      cancelCurrentFetch() {},
       resetRotationHistory() {},
-      async fetchValidateAssignStreaming(
+      async fetchAssignDirect(
         browserIds: number[],
         onAssignment: (assignment: { browserId: number; proxy: ProxyRecord }) => void
       ): Promise<ReloadProxiesSummary> {
@@ -459,9 +457,9 @@ describe('SeoAutomationManager continuous measurement', () => {
     const proxy = makeProxy('click-fail');
     const tokens = new Map<number, number>();
     const proxyManager = {
-      cancelCurrentValidation() {},
+      cancelCurrentFetch() {},
       resetRotationHistory() {},
-      async fetchValidateAssignStreaming(
+      async fetchAssignDirect(
         browserIds: number[],
         onAssignment: (assignment: { browserId: number; proxy: ProxyRecord }) => void
       ): Promise<ReloadProxiesSummary> {
@@ -541,9 +539,9 @@ describe('SeoAutomationManager continuous measurement', () => {
     const keepAliveHosts: string[] = [];
 
     const proxyManager = {
-      cancelCurrentValidation() {},
+      cancelCurrentFetch() {},
       resetRotationHistory() {},
-      async fetchValidateAssignStreaming(
+      async fetchAssignDirect(
         browserIds: number[],
         onAssignment: (assignment: { browserId: number; proxy: ProxyRecord }) => void
       ): Promise<ReloadProxiesSummary> {
