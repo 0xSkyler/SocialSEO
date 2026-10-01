@@ -1779,12 +1779,21 @@ export function buildInstallGoogleLiveTargetObserverScript(
 
       function mentionsTarget(text) {
         var source = String(text || '').toLowerCase().replace(/www\\./g, '');
-        var escaped = target.replace(/[-/\\\\^$*+?.()|[\]{}]/g, '\\\\$&');
-        try {
-          return new RegExp('(^|[^a-z0-9.-])' + escaped + '(?=$|[^a-z0-9.-])', 'i').test(source);
-        } catch (_) {
-          return false;
+        var needle = String(target || '').toLowerCase().replace(/^www\\./, '');
+        if (!needle) return false;
+        var from = 0;
+        while (from <= source.length) {
+          var at = source.indexOf(needle, from);
+          if (at < 0) return false;
+          var before = at > 0 ? source.charAt(at - 1) : '';
+          var afterAt = at + needle.length;
+          var after = afterAt < source.length ? source.charAt(afterAt) : '';
+          var beforeOk = !before || !/[a-z0-9.-]/i.test(before);
+          var afterOk = !after || !/[a-z0-9.-]/i.test(after);
+          if (beforeOk && afterOk) return true;
+          from = at + 1;
         }
+        return false;
       }
 
       function elementRect(element) {
