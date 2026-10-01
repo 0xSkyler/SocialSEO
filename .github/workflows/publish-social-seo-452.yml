@@ -1,0 +1,49 @@
+name: Publish Social SEO 4.5.2 EXE
+
+on:
+  push:
+    branches:
+      - social-seo-4.5.2-build
+    paths:
+      - .github/workflows/publish-social-seo-452.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_RUN_ID: "36846451468"
+      TAG_NAME: "social-seo-v4.5.2"
+      EXE_NAME: "Social-SEO-Setup-4.5.2.exe"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download verified installer artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-upload | Out-Null
+          gh run download $env:BUILD_RUN_ID -n "Social-SEO-4.5.2-Windows" -D release-upload
+          $exe = Get-ChildItem release-upload -Filter $env:EXE_NAME -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "Installer EXE not found in build artifact." }
+          Copy-Item $exe.FullName (Join-Path "release-upload" $env:EXE_NAME) -Force
+          $hash = (Get-FileHash (Join-Path "release-upload" $env:EXE_NAME) -Algorithm SHA256).Hash.ToLowerInvariant()
+          $hash | Set-Content (Join-Path "release-upload" "Social-SEO-Setup-4.5.2.sha256.txt")
+          Write-Host "Installer SHA256: $hash"
+
+      - name: Create or update GitHub release
+        shell: pwsh
+        run: |
+          $tag = $env:TAG_NAME
+          $exe = Join-Path "release-upload" $env:EXE_NAME
+          $sha = Join-Path "release-upload" "Social-SEO-Setup-4.5.2.sha256.txt"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $exe $sha --clobber
+          } else {
+            gh release create $tag $exe $sha --target "${{ github.sha }}" --title "Social SEO 4.5.2" --notes "Fix: any page.goto navigation error, including certificate/TLS errors such as ERR_CERT_AUTHORITY_INVALID, now triggers immediate proxy rotation to another unused proxy when available. Proxy source remains http://169.58.35.69/data/elite.txt."
+          }
