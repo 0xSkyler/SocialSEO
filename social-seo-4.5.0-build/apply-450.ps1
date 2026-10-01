@@ -372,8 +372,7 @@ $newTokens = @'
     'Proxy connection failed',
     'tunnel connection failed'
 '@
-if (-not $wm.Contains($oldTokens.Trim())) { throw "Patch point not found: proxy error tokens" }
-$wm = $wm.Replace($oldTokens.Trim(), $newTokens.Trim())
+$wm = Replace-Once $wm "    'ERR_MANDATORY_PROXY_CONFIGURATION_FAILED',\r?\n    'SOCKS connection failed',\r?\n    'Proxy connection failed'" $newTokens "proxy error tokens"
 
 $oldCycleCall = @'
       this.proxies.noteCompletedBrowserCycle(runCount);
@@ -383,8 +382,7 @@ $newCycleCall = @'
         log.warn('[proxy-source] Cycle ' + runCount + ' refresh failed; current sessions continue.', error);
       });
 '@
-if (-not $wm.Contains($oldCycleCall.Trim())) { throw "Patch point not found: browser cycle refresh" }
-$wm = $wm.Replace($oldCycleCall.Trim(), $newCycleCall.Trim())
+$wm = Replace-Once $wm '      this\.proxies\.noteCompletedBrowserCycle\(runCount\);' $newCycleCall "browser cycle refresh"
 
 $timeoutBranch = @'
       if (isInitialPageLoadTimeout(error)) {
