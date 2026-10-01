@@ -1,143 +1,131 @@
-import { ipcMain, dialog, shell, clipboard, app, BrowserWindow } from 'electron';
-import os from 'node:os';
-import { IPC_CHANNELS } from '../../shared/types/ipc';
-import type { BrowserBounds } from '../../shared/types/browser';
-import type { BrowserManager } from '../BrowserManager';
-import type { ProxyManager } from '../ProxyManager';
-import type { SettingsManager } from '../SettingsManager';
-import { logger } from '../Logger';
+import fs from 'node:fs';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import type { AppSettings } from '../../shared/types/settings';
+import type { ProxyProvider } from '../../shared/proxySource';
+import type { WorkspaceState } from '../../shared/types/workspace';
+import type { ProxyValidationProgress } from '../../shared/types/proxy';
+import { getPlaywrightVersion } from '../browser/PlaywrightRuntime';
+import { ProxyManager } from '../ProxyManager';
+import { SettingsManager } from '../SettingsManager';
+import { WorkspaceManager } from '../WorkspaceManager';
+import { loadProxyProviderPool, loadProxyTextPool } from '../proxyPipeline';
 
-export interface IpcDeps {
-  browserManager: BrowserManager;
-  proxyManager: ProxyManager;
-  settingsManager: SettingsManager;
-  getBrowserIds: () => number[];
-}
+const CHANNELS = [
+  'app:bootstrap',
+  'workspace:launch', 'workspace:launch-all', 'workspace:stop', 'workspace:stop-all', 'workspace:focus',
+  'workspace:navigate', 'workspace:set-target', 'workspace:reload', 'workspace:reload-all',
+  'workspace:keep-alive', 'workspace:keep-alive-all', 'workspace:rotate-proxy',
+  'workspace:check-ip', 'workspace:check-all-ips', 'workspace:clear-data',
+  'central:apply-targets',
+  'proxy:fetch-remote', 'proxy:import-file', 'proxy:list', 'proxy:assign', 'proxy:assign-one', 'proxy:replace', 'proxy:validate', 'proxy:validation-cancel', 'proxy:validation-status', 'proxy:clear',
+  'settings:get', 'settings:set', 'engine:detect'
+] as const;
 
-/**
- * Registers every IPC handler the preload bridge is allowed to call.
- * This is the single trust boundary in the app: the renderer never gets
- * direct access to Node/Electron APIs (contextIsolation + no
- * nodeIntegration + sandbox — see main.ts), only these narrow, typed
- * request/response and event channels.
- */
-export function registerIpc(deps: IpcDeps): void {
-  const { browserManager, proxyManager, settingsManager, getBrowserIds } = deps;
+export function registerIpc(window: BrowserWindow, settings: SettingsManager, proxies: ProxyManager, workspaces: WorkspaceManager): void {
+  for (const channel of CHANNELS) ipcMain.removeHandler(channel);
 
-  ipcMain.handle(IPC_CHANNELS.browserGetAll, () => browserManager.getAll());
-  ipcMain.handle(IPC_CHANNELS.browserNavigate, (_e, id: number, url: string) => browserManager.navigate(id, url));
-  ipcMain.handle(IPC_CHANNELS.browserReload, (_e, id: number) => browserManager.reload(id));
-  ipcMain.handle(IPC_CHANNELS.browserStop, (_e, id: number) => browserManager.stop(id));
-  ipcMain.handle(IPC_CHANNELS.browserBack, (_e, id: number) => browserManager.goBack(id));
-  ipcMain.handle(IPC_CHANNELS.browserForward, (_e, id: number) => browserManager.goForward(id));
-  ipcMain.handle(IPC_CHANNELS.browserReloadAll, () => browserManager.reloadAll());
-  ipcMain.handle(IPC_CHANNELS.browserStopAll, () => browserManager.stopAll());
-  ipcMain.handle(IPC_CHANNELS.browserClearCookies, (_e, id: number) => browserManager.clearCookies(id));
-  ipcMain.handle(IPC_CHANNELS.browserClearCache, (_e, id: number) => browserManager.clearCache(id));
-  ipcMain.handle(IPC_CHANNELS.browserDevTools, (_e, id: number) => browserManager.openDevTools(id));
-  ipcMain.handle(IPC_CHANNELS.browserRestart, (_e, id: number) => browserManager.restart(id));
-  ipcMain.handle(IPC_CHANNELS.browserSetActive, (_e, id: number) => browserManager.setActive(id));
-  ipcMain.handle(IPC_CHANNELS.browserSetBounds, (_e, id: number, bounds: BrowserBounds) =>
-    browserManager.setBounds(id, bounds)
-  );
-  ipcMain.handle(IPC_CHANNELS.browserCheckIp, async (_e, id: number) => {
-    const settings = settingsManager.get();
-    const result = await browserManager.checkIp(id, settings.proxy.ipCheckUrl);
-    return { browserId: id, ...result, checkedAt: new Date().toISOString() };
-  });
-  ipcMain.handle(IPC_CHANNELS.browserCheckAllIps, async () => {
-    const settings = settingsManager.get();
-    const ids = getBrowserIds();
-    return Promise.all(
-      ids.map(async (id) => {
-        const result = await browserManager.checkIp(id, settings.proxy.ipCheckUrl);
-        return { browserId: id, ...result, checkedAt: new Date().toISOString() };
-      })
-    );
-  });
-
-  ipcMain.handle(IPC_CHANNELS.browserBroadcastSearch, async (_e, ids: number[], query: string, matchText: string) => {
-    const targets = ids.length > 0 ? ids : getBrowserIds();
-    return Promise.all(targets.map((id) => browserManager.broadcastSearch(id, query, matchText)));
-  });
-
-  ipcMain.handle(IPC_CHANNELS.proxyReload, async (_e, countryCode: string | null) => {
-    const summary = await proxyManager.reload(getBrowserIds(), countryCode);
-    // reload() only updates ProxyManager's own bookkeeping — it does not
-    // touch each browser's actual Electron session. Without this loop, the
-    // UI would show a proxy assigned while that browser's real network
-    // traffic kept using whatever it had before (or none at all), which is
-    // exactly the gap that made the "Assign Proxies" button not visibly do
-    // anything to the browsers themselves.
-    for (const assignment of summary.assignments) {
-      await browserManager.assignProxy(assignment.browserId, assignment.proxy);
+  ipcMain.handle('app:bootstrap', () => ({
+    settings: settings.get(),
+    workspaces: workspaces.getStates(),
+    proxies: proxies.getPublicList(),
+    validationProgress: proxies.getValidationProgress(),
+    engines: workspaces.detectEngines(),
+    diagnostics: {
+      appVersion: app.getVersion(),
+      electronVersion: process.versions.electron,
+      chromiumVersion: process.versions.chrome,
+      nodeVersion: process.versions.node,
+      platform: process.platform,
+      arch: process.arch,
+      playwrightVersion: getPlaywrightVersion()
     }
-    return summary;
-  });
-  ipcMain.handle(IPC_CHANNELS.proxyGetAll, () => proxyManager.getAll());
-  ipcMain.handle(IPC_CHANNELS.proxyAssign, async (_e, browserId: number, proxyId: string | null) => {
-    await proxyManager.assign(browserId, proxyId);
-    const proxy = proxyId ? proxyManager.getAll().find((p) => p.id === proxyId) ?? null : null;
-    await browserManager.assignProxy(browserId, proxy);
-  });
-  ipcMain.handle(IPC_CHANNELS.proxyReplaceFailed, async (_e, browserId: number) => {
-    const proxy = await proxyManager.replaceFailed(browserId);
-    await browserManager.assignProxy(browserId, proxy);
-    return proxy;
-  });
-  ipcMain.handle(IPC_CHANNELS.proxyValidate, (_e, proxyId: string) => proxyManager.validate(proxyId));
-  ipcMain.handle(IPC_CHANNELS.proxyValidateAll, () => proxyManager.validateAll());
-  ipcMain.handle(IPC_CHANNELS.proxyCheckGoogleTrust, (_e, proxyId: string) => proxyManager.checkGoogleTrustFor(proxyId));
-  ipcMain.handle(IPC_CHANNELS.proxyCheckGoogleTrustForWorking, () => proxyManager.checkGoogleTrustForWorking());
-  ipcMain.handle(IPC_CHANNELS.proxyImportText, (_e, text: string) => proxyManager.importText(text));
-  ipcMain.handle(IPC_CHANNELS.proxyImportFile, (_e, filePath: string) => proxyManager.importFile(filePath));
-  ipcMain.handle(IPC_CHANNELS.proxyExport, (_e, format: 'txt' | 'csv' | 'json') => proxyManager.exportProxies(format));
-
-  ipcMain.handle(IPC_CHANNELS.settingsGet, () => settingsManager.get());
-  ipcMain.handle(IPC_CHANNELS.settingsUpdate, (_e, partial) => settingsManager.update(partial));
-  ipcMain.handle(IPC_CHANNELS.settingsReset, () => settingsManager.reset());
-
-  ipcMain.handle(IPC_CHANNELS.systemDiagnostics, () => ({
-    appVersion: app.getVersion(),
-    electronVersion: process.versions.electron,
-    chromeVersion: process.versions.chrome,
-    nodeVersion: process.versions.node,
-    osVersion: `${os.type()} ${os.release()}`,
-    platform: process.platform,
-    arch: process.arch,
-    browserCount: getBrowserIds().length,
-    memory: {
-      rssMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
-      totalMb: Math.round(os.totalmem() / 1024 / 1024)
-    },
-    online: true
   }));
-  ipcMain.handle(IPC_CHANNELS.systemOpenLogs, () => shell.openPath(logger.logsFolderPath()));
-  ipcMain.handle(IPC_CHANNELS.systemPickProxyFile, async () => {
-    const result = await dialog.showOpenDialog({
-      filters: [{ name: 'Proxy Lists', extensions: ['txt', 'csv'] }],
-      properties: ['openFile']
+
+  ipcMain.handle('workspace:launch', (_event, id: number) => workspaces.launch(id));
+  ipcMain.handle('workspace:launch-all', () => workspaces.launchAll());
+  ipcMain.handle('workspace:stop', (_event, id: number) => workspaces.stop(id));
+  ipcMain.handle('workspace:stop-all', () => workspaces.stopAll());
+  ipcMain.handle('workspace:focus', (_event, id: number) => workspaces.focus(id));
+  ipcMain.handle('workspace:navigate', (_event, id: number, url: string) => workspaces.navigate(id, url));
+  ipcMain.handle('workspace:set-target', (_event, id: number, url: string) => workspaces.setTarget(id, url));
+  ipcMain.handle('workspace:reload', (_event, id: number) => workspaces.reload(id));
+  ipcMain.handle('workspace:reload-all', () => workspaces.reloadAll());
+  ipcMain.handle('workspace:keep-alive', (_event, id: number, enabled: boolean) => workspaces.setKeepAlive(id, enabled));
+  ipcMain.handle('workspace:keep-alive-all', (_event, enabled: boolean) => workspaces.setKeepAliveAll(enabled));
+  ipcMain.handle('workspace:rotate-proxy', (_event, id: number) => workspaces.rotateProxy(id));
+  ipcMain.handle('workspace:check-ip', (_event, id: number) => workspaces.checkIp(id));
+  ipcMain.handle('workspace:check-all-ips', () => workspaces.checkAllIps());
+  ipcMain.handle('workspace:clear-data', (_event, workspaceIds: number[]) => workspaces.clearBrowserData(workspaceIds));
+
+  ipcMain.handle('central:apply-targets', (_event, entries: Array<{ id: number; url: string }>) => workspaces.applyTargets(entries));
+
+  ipcMain.handle('proxy:fetch-remote', async (_event, provider?: ProxyProvider) => {
+    const selected = provider ?? settings.get().proxyProvider;
+    if (provider) settings.set({ proxyProvider: provider });
+    return loadProxyProviderPool(selected, settings, proxies, workspaces);
+  });
+  ipcMain.handle('proxy:import-file', async () => {
+    const picked = await dialog.showOpenDialog(window, {
+      title: 'Select proxy.txt',
+      properties: ['openFile'],
+      filters: [{ name: 'Proxy text file', extensions: ['txt'] }]
     });
-    if (result.canceled || result.filePaths.length === 0) return null;
-    return result.filePaths[0];
+    if (picked.canceled || !picked.filePaths[0]) return undefined;
+    const text = fs.readFileSync(picked.filePaths[0], 'utf8');
+    return loadProxyTextPool(text, settings, proxies, workspaces, 'proxy.txt');
   });
-  ipcMain.handle(IPC_CHANNELS.systemClipboard, (_e, text: string) => clipboard.writeText(text));
-
-  browserManager.on('stateChanged', (state) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send(IPC_CHANNELS.browserStateChanged, state);
-    }
+  ipcMain.handle('proxy:list', () => proxies.getPublicList());
+  ipcMain.handle('proxy:assign', async () => {
+    const assignments = await proxies.buildAssignments();
+    await workspaces.applyAssignments();
+    return assignments.filter((item) => item.proxyId).length;
+  });
+  ipcMain.handle('proxy:assign-one', async (_event, workspaceId: number, proxyId?: string) => workspaces.assignOne(workspaceId, proxyId));
+  ipcMain.handle('proxy:replace', async (_event, workspaceId: number) => workspaces.replaceProxy(workspaceId));
+  ipcMain.handle('proxy:validate', async (_event, proxyIds?: string[]) => {
+    const currentSettings = settings.get();
+    return proxies.validateStreaming(proxyIds, async (proxy) => {
+      if (!currentSettings.validation.assignWorkingImmediately) return;
+      const assignment = proxies.assignWorkingProxyImmediately(proxy.id);
+      if (assignment) void workspaces.applyLiveAssignment(assignment.workspaceId).catch(() => undefined);
+    });
+  });
+  ipcMain.handle('proxy:validation-cancel', () => proxies.cancelValidation());
+  ipcMain.handle('proxy:validation-status', () => proxies.getValidationProgress());
+  ipcMain.handle('proxy:clear', async () => {
+    proxies.clear();
+    await workspaces.applyAssignments();
   });
 
-  proxyManager.on('assignmentsChanged', (summary) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send(IPC_CHANNELS.proxyAssignmentsChanged, summary);
-    }
-  });
+  ipcMain.handle('settings:get', () => settings.get());
+  ipcMain.handle('settings:set', async (_event, patch: Partial<AppSettings>) => {
+    const previous = settings.get();
+    const next = settings.set(patch);
 
-  proxyManager.on('reloadProgress', (progress) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send(IPC_CHANNELS.proxyReloadProgress, progress);
+    if (patch.browserCount !== undefined) await workspaces.reconcileBrowserCount(next.browserCount);
+
+    const rotationChanged = patch.defaultRotationSeconds !== undefined
+      && next.defaultRotationSeconds !== previous.defaultRotationSeconds;
+    const keepAliveChanged = patch.keepAlive !== undefined
+      && JSON.stringify(next.keepAlive) !== JSON.stringify(previous.keepAlive);
+
+    if (rotationChanged || keepAliveChanged) {
+      await workspaces.applyGlobalRuntimeSettings(next.defaultRotationSeconds, true);
+    } else if (patch.defaultRotationSeconds !== undefined) {
+      await workspaces.applyGlobalRuntimeSettings(next.defaultRotationSeconds, false);
     }
+
+    return next;
+  });
+  ipcMain.handle('engine:detect', () => workspaces.detectEngines());
+
+  workspaces.on('state', (state: WorkspaceState) => {
+    if (!window.isDestroyed()) window.webContents.send('workspace:state', state);
+  });
+  proxies.on('changed', () => {
+    if (!window.isDestroyed()) window.webContents.send('proxy:changed', proxies.getPublicList());
+  });
+  proxies.on('validation-progress', (progress: ProxyValidationProgress) => {
+    if (!window.isDestroyed()) window.webContents.send('proxy:validation-progress', progress);
   });
 }

@@ -1,101 +1,57 @@
 import { describe, expect, it } from 'vitest';
-import { ProxyParser, buildProxyId, dedupeProxies, parseBulkText, toProxyRecord } from '../src/proxy/ProxyParser';
+import { parseProxyLine, parseProxyText } from '../src/proxy/ProxyParser';
 
 describe('ProxyParser', () => {
-  it('parses a plain http URL proxy', () => {
-    const parsed = ProxyParser.parseLine('http://1.2.3.4:8080');
-    expect(parsed).toEqual({ host: '1.2.3.4', port: 8080, protocol: 'http', username: undefined, password: undefined });
+  it('parses HTTP proxy URLs', () => {
+    const proxy = parseProxyLine('http://1.2.3.4:8080');
+    expect(proxy).toMatchObject({ protocol: 'http', host: '1.2.3.4', port: 8080, status: 'unverified' });
   });
 
-  it('parses an authenticated proxy URL', () => {
-    const parsed = ProxyParser.parseLine('http://user:pass@1.2.3.4:8080');
-    expect(parsed.username).toBe('user');
-    expect(parsed.password).toBe('pass');
-    expect(parsed.host).toBe('1.2.3.4');
-    expect(parsed.port).toBe(8080);
+  it('parses authenticated URLs', () => {
+    const proxy = parseProxyLine('http://user:pass@1.2.3.4:8080');
+    expect(proxy.username).toBe('user');
+    expect(proxy.password).toBe('pass');
   });
 
-  it('parses a SOCKS5 proxy URL', () => {
-    const parsed = ProxyParser.parseLine('socks5://9.10.11.12:1080');
-    expect(parsed.protocol).toBe('socks5');
-    expect(parsed.port).toBe(1080);
+  it('parses SOCKS5', () => {
+    expect(parseProxyLine('socks5://1.2.3.4:1080')).toMatchObject({ protocol: 'socks5', port: 1080 });
   });
 
-  it('parses host:port form', () => {
-    const parsed = ProxyParser.parseLine('127.0.0.1:8080');
-    expect(parsed).toMatchObject({ host: '127.0.0.1', port: 8080, protocol: 'http' });
-  });
 
-  it('parses host:port:username:password form', () => {
-    const parsed = ProxyParser.parseLine('127.0.0.1:8080:username:password');
-    expect(parsed).toMatchObject({
-      host: '127.0.0.1',
-      port: 8080,
+  it('parses login:password@hostname:port gateway format', () => {
+    const proxy = parseProxyLine('demo_user:demo_password@gw.dataimpulse.com:824');
+    expect(proxy).toMatchObject({
       protocol: 'http',
-      username: 'username',
-      password: 'password'
+      host: 'gw.dataimpulse.com',
+      port: 824,
+      username: 'demo_user',
+      password: 'demo_password'
     });
   });
 
-  it('throws on garbage input via parseLine', () => {
-    expect(() => ProxyParser.parseLine('garbage')).toThrow();
+  it('allows @ and : characters inside the password in gateway format', () => {
+    const proxy = parseProxyLine('user:pa:ss@word@gateway.example.com:9000');
+    expect(proxy).toMatchObject({
+      protocol: 'http',
+      host: 'gateway.example.com',
+      port: 9000,
+      username: 'user',
+      password: 'pa:ss@word'
+    });
+  });
+  it('parses host:port:user:password', () => {
+    expect(parseProxyLine('1.2.3.4:8080:user:pass')).toMatchObject({ protocol: 'http', username: 'user', password: 'pass' });
   });
 
-  it('returns null on garbage input via tryParseLine (never throws)', () => {
-    expect(ProxyParser.tryParseLine('garbage')).toBeNull();
-    expect(ProxyParser.tryParseLine('not a proxy at all !!')).toBeNull();
-    expect(ProxyParser.tryParseLine('')).toBeNull();
+  it('rejects garbage without stopping the rest of an import', () => {
+    const result = parseProxyText('garbage\nhttp://1.2.3.4:8080');
+    expect(result.proxies).toHaveLength(1);
+    expect(result.errors).toHaveLength(1);
   });
 
-  it('rejects invalid ports', () => {
-    expect(ProxyParser.tryParseLine('1.2.3.4:99999')).toBeNull();
-    expect(ProxyParser.tryParseLine('1.2.3.4:0')).toBeNull();
-    expect(ProxyParser.tryParseLine('1.2.3.4:notaport')).toBeNull();
-  });
-
-  it('builds a stable, case-insensitive-host id', () => {
-    const id1 = buildProxyId({ protocol: 'http', host: 'Example.com', port: 8080 });
-    const id2 = buildProxyId({ protocol: 'http', host: 'example.com', port: 8080 });
-    expect(id1).toBe(id2);
-  });
-});
-
-describe('parseBulkText', () => {
-  it('parses a multi-line block and never throws on malformed lines', () => {
-    const text = [
-      'http://1.2.3.4:8080',
-      'garbage',
-      'socks5://9.10.11.12:1080',
-      '# a comment',
-      '',
-      '127.0.0.1:8080:user:pass'
-    ].join('\n');
-
-    const { proxies, invalidLines } = parseBulkText(text, 'test-source');
-    expect(proxies).toHaveLength(3);
-    expect(invalidLines).toEqual(['garbage']);
-  });
-
-  it('handles a fully empty import', () => {
-    const { proxies, invalidLines } = parseBulkText('', 'test-source');
-    expect(proxies).toHaveLength(0);
-    expect(invalidLines).toHaveLength(0);
-  });
-});
-
-describe('dedupeProxies', () => {
-  it('merges duplicate protocol+host+port entries and preserves both sources', () => {
-    const a = toProxyRecord({ host: '1.2.3.4', port: 8080, protocol: 'http' }, 'Provider A');
-    const b = toProxyRecord({ host: '1.2.3.4', port: 8080, protocol: 'http' }, 'Provider B');
-    const deduped = dedupeProxies([a, b]);
-
-    expect(deduped).toHaveLength(1);
-    expect(deduped[0].sources.sort()).toEqual(['Provider A', 'Provider B']);
-  });
-
-  it('keeps distinct proxies distinct', () => {
-    const a = toProxyRecord({ host: '1.2.3.4', port: 8080, protocol: 'http' }, 'Provider A');
-    const b = toProxyRecord({ host: '1.2.3.4', port: 8081, protocol: 'http' }, 'Provider A');
-    expect(dedupeProxies([a, b])).toHaveLength(2);
+  it('deduplicates protocol + host + port', () => {
+    const result = parseProxyText('http://1.2.3.4:8080\nhttp://1.2.3.4:8080');
+    expect(result.proxies).toHaveLength(1);
+    expect(result.duplicates).toBe(1);
   });
 });

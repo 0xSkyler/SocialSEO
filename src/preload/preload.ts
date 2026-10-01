@@ -1,130 +1,66 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppApi } from '../shared/types/ipc';
+import type { EngineInfo } from '../shared/types/browser';
+import type { ProxyDeskApi } from '../shared/types/ipc';
+import type { ProxyRecord, ProxyValidationProgress } from '../shared/types/proxy';
+import type { AppSettings } from '../shared/types/settings';
+import type { WorkspaceState } from '../shared/types/workspace';
 
-/**
- * The ONLY bridge between renderer and main. `contextIsolation: true` +
- * `nodeIntegration: false` + `sandbox: true` (see main.ts) mean the
- * renderer has zero direct access to Node or unrestricted Electron APIs;
- * everything it can do is explicitly whitelisted here as `window.app.*`,
- * matching the `AppApi` contract in src/shared/types/ipc.ts one-to-one.
- * No channel name is ever constructed dynamically from renderer input.
- *
- * IPC_CHANNELS is duplicated here (rather than imported from
- * ../shared/types/ipc) deliberately: Electron's sandboxed preload
- * environment (`sandbox: true`) cannot resolve `require()` of sibling
- * relative files — only a preload that is fully self-contained (plus
- * `require('electron')`, which is specially shimmed) loads correctly.
- * Importing a value from a relative path here compiles to a `require()`
- * that silently fails in the sandboxed preload context, `window.app`
- * never gets exposed, and the renderer crashes on its first read of it —
- * which is exactly the blank/black-screen bug this fixed. The type-only
- * `import type { AppApi }` below is erased at compile time and has no
- * runtime require, so it stays safe to import normally. Keep this object
- * in sync with IPC_CHANNELS in ../shared/types/ipc.ts if channels change.
- */
-const IPC_CHANNELS = {
-  browserGetAll: 'browser:getAll',
-  browserNavigate: 'browser:navigate',
-  browserReload: 'browser:reload',
-  browserStop: 'browser:stop',
-  browserBack: 'browser:back',
-  browserForward: 'browser:forward',
-  browserReloadAll: 'browser:reloadAll',
-  browserStopAll: 'browser:stopAll',
-  browserClearCookies: 'browser:clearCookies',
-  browserClearCache: 'browser:clearCache',
-  browserDevTools: 'browser:devTools',
-  browserSetBounds: 'browser:setBounds',
-  browserSetActive: 'browser:setActive',
-  browserCheckIp: 'browser:checkIp',
-  browserCheckAllIps: 'browser:checkAllIps',
-  browserRestart: 'browser:restart',
-  browserBroadcastSearch: 'browser:broadcastSearch',
-  browserStateChanged: 'browser:stateChanged',
-
-  proxyReload: 'proxy:reload',
-  proxyGetAll: 'proxy:getAll',
-  proxyAssign: 'proxy:assign',
-  proxyReplaceFailed: 'proxy:replaceFailed',
-  proxyValidate: 'proxy:validate',
-  proxyValidateAll: 'proxy:validateAll',
-  proxyCheckGoogleTrust: 'proxy:checkGoogleTrust',
-  proxyCheckGoogleTrustForWorking: 'proxy:checkGoogleTrustForWorking',
-  proxyImportText: 'proxy:importText',
-  proxyImportFile: 'proxy:importFile',
-  proxyExport: 'proxy:export',
-  proxyAssignmentsChanged: 'proxy:assignmentsChanged',
-  proxyReloadProgress: 'proxy:reloadProgress',
-
-  settingsGet: 'settings:get',
-  settingsUpdate: 'settings:update',
-  settingsReset: 'settings:reset',
-
-  systemDiagnostics: 'system:diagnostics',
-  systemOpenLogs: 'system:openLogs',
-  systemPickProxyFile: 'system:pickProxyFile',
-  systemClipboard: 'system:clipboard'
-} as const;
-const api: AppApi = {
-  browser: {
-    getAll: () => ipcRenderer.invoke(IPC_CHANNELS.browserGetAll),
-    navigate: (id, url) => ipcRenderer.invoke(IPC_CHANNELS.browserNavigate, id, url),
-    reload: (id) => ipcRenderer.invoke(IPC_CHANNELS.browserReload, id),
-    stop: (id) => ipcRenderer.invoke(IPC_CHANNELS.browserStop, id),
-    goBack: (id) => ipcRenderer.invoke(IPC_CHANNELS.browserBack, id),
-    goForward: (id) => ipcRenderer.invoke(IPC_CHANNELS.browserForward, id),
-    reloadAll: () => ipcRenderer.invoke(IPC_CHANNELS.browserReloadAll),
-    stopAll: () => ipcRenderer.invoke(IPC_CHANNELS.browserStopAll),
-    clearCookies: (id) => ipcRenderer.invoke(IPC_CHANNELS.browserClearCookies, id),
-    clearCache: (id) => ipcRenderer.invoke(IPC_CHANNELS.browserClearCache, id),
-    openDevTools: (id) => ipcRenderer.invoke(IPC_CHANNELS.browserDevTools, id),
-    setBounds: (id, bounds) => ipcRenderer.invoke(IPC_CHANNELS.browserSetBounds, id, bounds),
-    setActive: (id) => ipcRenderer.invoke(IPC_CHANNELS.browserSetActive, id),
-    checkIp: (id) => ipcRenderer.invoke(IPC_CHANNELS.browserCheckIp, id),
-    checkAllIps: () => ipcRenderer.invoke(IPC_CHANNELS.browserCheckAllIps),
-    restart: (id) => ipcRenderer.invoke(IPC_CHANNELS.browserRestart, id),
-    broadcastSearch: (ids, query, matchText) =>
-      ipcRenderer.invoke(IPC_CHANNELS.browserBroadcastSearch, ids, query, matchText),
-    onStateChanged: (cb) => {
-      const listener = (_e: Electron.IpcRendererEvent, state: Parameters<typeof cb>[0]) => cb(state);
-      ipcRenderer.on(IPC_CHANNELS.browserStateChanged, listener);
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.browserStateChanged, listener);
-    }
+const api: ProxyDeskApi = {
+  bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
+  workspace: {
+    launch: (id) => ipcRenderer.invoke('workspace:launch', id),
+    launchAll: () => ipcRenderer.invoke('workspace:launch-all'),
+    stop: (id) => ipcRenderer.invoke('workspace:stop', id),
+    stopAll: () => ipcRenderer.invoke('workspace:stop-all'),
+    focus: (id) => ipcRenderer.invoke('workspace:focus', id),
+    navigate: (id, url) => ipcRenderer.invoke('workspace:navigate', id, url),
+    setTarget: (id, url) => ipcRenderer.invoke('workspace:set-target', id, url),
+    reload: (id) => ipcRenderer.invoke('workspace:reload', id),
+    reloadAll: () => ipcRenderer.invoke('workspace:reload-all'),
+    setKeepAlive: (id, enabled) => ipcRenderer.invoke('workspace:keep-alive', id, enabled),
+    setKeepAliveAll: (enabled) => ipcRenderer.invoke('workspace:keep-alive-all', enabled),
+    rotateProxy: (id) => ipcRenderer.invoke('workspace:rotate-proxy', id),
+    checkIp: (id) => ipcRenderer.invoke('workspace:check-ip', id),
+    checkAllIps: () => ipcRenderer.invoke('workspace:check-all-ips'),
+    clearData: (workspaceIds) => ipcRenderer.invoke('workspace:clear-data', workspaceIds)
+  },
+  central: {
+    applyTargets: (entries) => ipcRenderer.invoke('central:apply-targets', entries)
   },
   proxy: {
-    reload: (countryCode) => ipcRenderer.invoke(IPC_CHANNELS.proxyReload, countryCode),
-    getAll: () => ipcRenderer.invoke(IPC_CHANNELS.proxyGetAll),
-    assign: (browserId, proxyId) => ipcRenderer.invoke(IPC_CHANNELS.proxyAssign, browserId, proxyId),
-    replaceFailed: (browserId) => ipcRenderer.invoke(IPC_CHANNELS.proxyReplaceFailed, browserId),
-    validate: (proxyId) => ipcRenderer.invoke(IPC_CHANNELS.proxyValidate, proxyId),
-    validateAll: () => ipcRenderer.invoke(IPC_CHANNELS.proxyValidateAll),
-    checkGoogleTrust: (proxyId) => ipcRenderer.invoke(IPC_CHANNELS.proxyCheckGoogleTrust, proxyId),
-    checkGoogleTrustForWorking: () => ipcRenderer.invoke(IPC_CHANNELS.proxyCheckGoogleTrustForWorking),
-    importText: (text) => ipcRenderer.invoke(IPC_CHANNELS.proxyImportText, text),
-    importFile: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.proxyImportFile, filePath),
-    exportProxies: (format) => ipcRenderer.invoke(IPC_CHANNELS.proxyExport, format),
-    onAssignmentsChanged: (cb) => {
-      const listener = (_e: Electron.IpcRendererEvent, summary: Parameters<typeof cb>[0]) => cb(summary);
-      ipcRenderer.on(IPC_CHANNELS.proxyAssignmentsChanged, listener);
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.proxyAssignmentsChanged, listener);
-    },
-    onReloadProgress: (cb) => {
-      const listener = (_e: Electron.IpcRendererEvent, progress: Parameters<typeof cb>[0]) => cb(progress);
-      ipcRenderer.on(IPC_CHANNELS.proxyReloadProgress, listener);
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.proxyReloadProgress, listener);
-    }
+    fetchRemote: (provider) => ipcRenderer.invoke('proxy:fetch-remote', provider),
+    importFile: () => ipcRenderer.invoke('proxy:import-file'),
+    list: () => ipcRenderer.invoke('proxy:list'),
+    assign: () => ipcRenderer.invoke('proxy:assign'),
+    assignOne: (workspaceId, proxyId) => ipcRenderer.invoke('proxy:assign-one', workspaceId, proxyId),
+    replace: (workspaceId) => ipcRenderer.invoke('proxy:replace', workspaceId),
+    validate: (proxyIds) => ipcRenderer.invoke('proxy:validate', proxyIds),
+    validationStatus: () => ipcRenderer.invoke('proxy:validation-status'),
+    cancelValidation: () => ipcRenderer.invoke('proxy:validation-cancel'),
+    clear: () => ipcRenderer.invoke('proxy:clear')
   },
   settings: {
-    get: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
-    update: (partial) => ipcRenderer.invoke(IPC_CHANNELS.settingsUpdate, partial),
-    reset: () => ipcRenderer.invoke(IPC_CHANNELS.settingsReset)
+    get: () => ipcRenderer.invoke('settings:get'),
+    set: (patch: Partial<AppSettings>) => ipcRenderer.invoke('settings:set', patch)
   },
-  system: {
-    getDiagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.systemDiagnostics),
-    openLogsFolder: () => ipcRenderer.invoke(IPC_CHANNELS.systemOpenLogs),
-    pickProxyFile: () => ipcRenderer.invoke(IPC_CHANNELS.systemPickProxyFile),
-    copyToClipboard: (text) => ipcRenderer.invoke(IPC_CHANNELS.systemClipboard, text)
-  }
+  engine: {
+    detect: () => ipcRenderer.invoke('engine:detect') as Promise<EngineInfo[]>
+  },
+  onWorkspaceState: (listener: (state: WorkspaceState) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: WorkspaceState) => listener(state);
+    ipcRenderer.on('workspace:state', handler);
+    return () => ipcRenderer.removeListener('workspace:state', handler);
+  },
+  onProxiesChanged: (listener: (proxies: ProxyRecord[]) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, proxies: ProxyRecord[]) => listener(proxies);
+    ipcRenderer.on('proxy:changed', handler);
+    return () => ipcRenderer.removeListener('proxy:changed', handler);
+  },
+  onValidationProgress: (listener: (progress: ProxyValidationProgress) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: ProxyValidationProgress) => listener(progress);
+    ipcRenderer.on('proxy:validation-progress', handler);
+    return () => ipcRenderer.removeListener('proxy:validation-progress', handler);
+  },
 };
 
-contextBridge.exposeInMainWorld('app', api);
+contextBridge.exposeInMainWorld('proxydesk', api);
