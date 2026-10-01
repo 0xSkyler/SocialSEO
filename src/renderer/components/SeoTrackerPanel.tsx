@@ -83,8 +83,8 @@ export function SeoTrackerPanel(): JSX.Element {
         <div>
           <h1>PocketSEO Mobile</h1>
           <p>
-            ProxyScrape API → validation → Google monitoring → challenge pause/resume →
-            exact-host result opening → 2-scroll article hopping → rotation.
+            High API → direct proxy assignment → Google monitoring → challenge pause/resume →
+            controlled-test interaction → rotation → fresh API pull.
           </p>
         </div>
         <span className={running || starting ? 'tracker-pill tracker-pill--on' : 'tracker-pill'}>
@@ -183,14 +183,14 @@ export function SeoTrackerPanel(): JSX.Element {
       </div>
 
       <div className="tracker-status">
-        <span>Source <strong>ProxyScrape Free API</strong></span>
+        <span>Source <strong>High API</strong></span>
         <span>Cycle <strong>{automation?.cycleNumber ?? 0}</strong></span>
         <span>Keyword <strong>{automation?.currentQuery || '—'}</strong></span>
-        <span>Fetched <strong>{automation?.fetchedProxies ?? 0}</strong></span>
+        <span>Received <strong>{automation?.fetchedProxies ?? 0}</strong></span>
         <span>
-          Validated <strong>{automation?.checkedProxies ?? 0}/{automation?.totalProxies ?? 0}</strong>
+          Parsed <strong>{automation?.checkedProxies ?? 0}/{automation?.totalProxies ?? 0}</strong>
         </span>
-        <span>Live <strong>{automation?.liveProxies ?? 0}</strong></span>
+        <span>Unique <strong>{automation?.liveProxies ?? 0}</strong></span>
         <span>
           Assigned <strong>{automation?.assignedBrowsers ?? 0}/{automation?.browserIds.length ?? 0}</strong>
         </span>
