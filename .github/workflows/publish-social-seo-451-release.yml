@@ -1,0 +1,52 @@
+name: Publish Social SEO 4.5.1 EXE
+
+on:
+  push:
+    branches:
+      - social-seo-4.5.1-build
+    paths:
+      - '.github/workflows/publish-social-seo-451-release.yml'
+      - 'social-seo-4.5.1-release-trigger.txt'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download verified installer artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force -Path release_asset | Out-Null
+          gh run download 36836426592 --repo "$env:GITHUB_REPOSITORY" -n "Social-SEO-4.5.1-Windows" -D release_asset
+          $exe = Get-ChildItem -Path release_asset -Filter "Social-SEO-Setup-4.5.1.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "Verified installer not found in artifact." }
+          Write-Host "Installer: $($exe.FullName)"
+          Write-Host "Size: $($exe.Length)"
+
+      - name: Publish direct EXE release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "social-seo-v4.5.1"
+          $exe = Get-ChildItem -Path release_asset -Filter "Social-SEO-Setup-4.5.1.exe" -Recurse | Select-Object -First 1
+          $sha = Get-ChildItem -Path release_asset -Filter "Social-SEO-Setup-4.5.1.sha256.txt" -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "Installer not found." }
+
+          gh release view $tag --repo "$env:GITHUB_REPOSITORY" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $exe.FullName --repo "$env:GITHUB_REPOSITORY" --clobber
+            if ($sha) { gh release upload $tag $sha.FullName --repo "$env:GITHUB_REPOSITORY" --clobber }
+          } else {
+            $assets = @($exe.FullName)
+            if ($sha) { $assets += $sha.FullName }
+            gh release create $tag @assets --repo "$env:GITHUB_REPOSITORY" --target "$env:GITHUB_SHA" --title "Social SEO 4.5.1" --notes "Windows installer using the elite proxy API source: http://169.58.35.69/data/elite.txt"
+          }
