@@ -1,16 +1,25 @@
+# ProxyDesk All Working desktop verification
 name: Build Windows Installer
 
 on:
   push:
-    branches: [main]
-    tags: ['v*']
+    branches:
+      - main
+      - feature/proxydesk-all-working-dom-keepalive
+    tags:
+      - 'v*'
   pull_request:
-    branches: [main]
-  workflow_dispatch: {}
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: windows-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,7 +28,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
@@ -33,29 +42,40 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Smoke check High proxy API
+        shell: pwsh
+        run: |
+          $url = "http://169.58.35.69/data/all-working.txt"
+          $response = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 20
+          if ($response.StatusCode -ne 200) {
+            throw "High proxy API returned HTTP $($response.StatusCode)"
+          }
+          $body = [string]$response.Content
+          if ($body -notmatch '(?m)^(?:(?:http|https|socks4|socks5)://)?[^\s:]+:\d+\s*$') {
+            throw "High proxy API did not return parseable proxy entries."
+          }
+          Write-Host "High proxy API smoke check passed."
+
       - name: Build renderer + main
         run: npm run build
 
       - name: Package Windows installer
         run: npm run package:win
         env:
-          # electron-builder does not need GH_TOKEN unless publishing; we
-          # upload the artifact via actions/upload-artifact instead (see
-          # below) and only create a GitHub Release on a version tag.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MultiBrowserProxySetup-windows
-          path: release/MultiBrowserProxySetup.exe
+          name: ProxyDesk-AllWorking-Desktop-windows
+          path: release/ProxyDesk-AllWorking-Desktop-Setup.exe
           if-no-files-found: error
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: release/MultiBrowserProxySetup.exe
+          files: release/ProxyDesk-AllWorking-Desktop-Setup.exe
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
