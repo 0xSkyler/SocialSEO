@@ -2,7 +2,7 @@
   "name": "pocketseo-mobile",
   "productName": "PocketSEO Mobile",
   "version": "1.0.0",
-  "description": "Mobile Chrome-profile edition of the ProxyDesk SEO workflow with continuous validated proxy storage.",
+  "description": "Mobile Chrome-profile SEO tracker using direct per-cycle proxies from the configured High API.",
   "author": "PocketSEO Mobile",
   "license": "MIT",
   "repository": {
