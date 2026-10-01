@@ -118,12 +118,12 @@ export function SeoTrackerPanel(): JSX.Element {
         </label>
 
         <label>
-          Interaction host (optional test only)
+          Interaction host (optional; auto for test/private targets)
           <input
             value={controlledTestHost}
             disabled={running}
             onChange={(event) => setControlledTestHost(event.target.value)}
-            placeholder="e.g. staging.example.com"
+            placeholder="auto-detected for staging/test/dev/qa targets"
           />
         </label>
 
@@ -202,14 +202,13 @@ export function SeoTrackerPanel(): JSX.Element {
       )}
 
       <div className="tracker-note">
-        Each proxy session continuously monitors the active keyword + website. Comma-separated
-        keywords rotate one per cycle and wrap back to the first keyword. One minute before each
-        scheduled rotation, PocketSEO Mobile starts validating the next proxy pool in the background.
-        Google challenges pause the monitor instead of ending it; when normal results return in
-        the same session, scanning resumes. The Target website is the interaction host by
-        default. A matched result must either open that exact host and start Keep Alive, or
-        report an explicit click failure. Browser sessions are isolated in memory and start
-        fresh after every app restart.
+        Each cycle pulls a fresh proxy list from the All Working API, parses and deduplicates it,
+        assigns one proxy per active browser, and discards that response at the next rotation.
+        There is no proxy validation or next-cycle proxy buffer. Comma-separated keywords rotate
+        one per cycle and wrap back to the first keyword. For localhost/private/dev/test/staging/qa
+        targets, interaction is enabled automatically: an exact matched result is opened, landing
+        is verified, and continuous same-host Keep Alive starts without pressing the Keep Alive
+        button. Google challenges pause the monitor instead of ending it.
       </div>
 
       <div className="tracker-results">
