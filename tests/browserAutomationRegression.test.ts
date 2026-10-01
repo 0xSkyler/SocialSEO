@@ -552,7 +552,7 @@ describe('Google live-result observation', () => {
     };
 
     const root = {
-      querySelectorAll: (selector: string) => (selector === 'a[href]' ? [anchor] : [])
+      querySelectorAll: (selector: string) => (selector.includes('a[') ? [anchor] : [])
     };
     const document = {
       body: {
