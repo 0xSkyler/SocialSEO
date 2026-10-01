@@ -106,7 +106,7 @@ export class ProxyManager extends EventEmitter {
 
       logger.info(
         'proxy',
-        `High API cycle fetch: raw=${batch.rawEntries}, parsed=${batch.parsedEntries}, ` +
+        `All Working API cycle fetch: raw=${batch.rawEntries}, parsed=${batch.parsedEntries}, ` +
           `unique=${batch.proxies.length}, assigned=${assignedCount}/${browserIds.length}.`
       );
 
