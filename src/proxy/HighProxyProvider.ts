@@ -2,7 +2,7 @@ import type { ProxyRecord } from '../shared/types/proxy';
 import { ProxyParser, toProxyRecord } from './ProxyParser';
 
 export const HIGH_PROXY_URL = 'http://169.58.35.69/data/all-working.txt';
-const SOURCE_NAME = 'High API';
+const SOURCE_NAME = 'All Working API';
 const REQUEST_TIMEOUT_MS = 15_000;
 
 export interface HighProxyBatch {
@@ -13,7 +13,7 @@ export interface HighProxyBatch {
 }
 
 /**
- * Parse one high.txt response without performing any connectivity validation.
+ * Parse one all-working.txt response without performing any connectivity validation.
  * Endpoint uniqueness is host+port, intentionally ignoring protocol so the
  * same network endpoint cannot be assigned twice in one cycle.
  */
