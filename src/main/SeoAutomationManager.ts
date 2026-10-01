@@ -11,7 +11,7 @@ import {
   normalizeSeoMaxPages,
   parseAutomationKeywords
 } from '../shared/types/automation';
-import { normalizeTargetHost } from '../shared/seo';
+import { isControlledTestHost, normalizeTargetHost } from '../shared/seo';
 import type { BrowserManager } from './BrowserManager';
 import type { ProxyManager } from './ProxyManager';
 import { logger } from './Logger';
@@ -27,10 +27,9 @@ export declare interface SeoAutomationManager {
 /**
  * Single-purpose SEO Tracker orchestration:
  *
- * ProxyScrape free API -> local validation -> immediate exclusive assignment
- * -> continuous Google monitoring -> challenge pause/resume
- * -> exact-host result click -> repeating same-host Keep Alive
- * -> rotate and restart on the user-configured cadence.
+ * Fresh high.txt fetch -> direct exclusive assignment -> Google monitoring
+ * -> challenge pause/resume -> controlled-host interaction when explicitly
+ * configured -> rotate, discard the old list, and fetch again.
  */
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class SeoAutomationManager extends EventEmitter {
@@ -41,7 +40,7 @@ export class SeoAutomationManager extends EventEmitter {
   private state: SeoAutomationState = {
     running: false,
     cycleInProgress: false,
-    proxySource: 'ProxyScrape Free API',
+    proxySource: 'High API',
     query: '',
     currentQuery: '',
     targetWebsite: '',
@@ -82,12 +81,20 @@ export class SeoAutomationManager extends EventEmitter {
     if (keywords.length === 0) throw new Error('Enter at least one Google search keyword.');
     if (!targetHost) throw new Error('Enter a valid target website or site name.');
 
-    // Target website is the interaction host by default. An explicit override
-    // is allowed only when it resolves to the exact same hostname, so result
-    // opening and Keep Alive can never drift to a different site.
-    const controlledTestHost = requestedInteractionHost || targetHost;
-    if (controlledTestHost !== targetHost) {
-      throw new Error('Interaction host must exactly match the Target website host.');
+    // Public production targets remain read-only. Autonomous result opening
+    // and Keep Alive are enabled only when the user explicitly supplies the
+    // exact same host and it is clearly a controlled test/private environment.
+    let controlledTestHost: string | undefined;
+    if (requestedInteractionHost) {
+      if (requestedInteractionHost !== targetHost) {
+        throw new Error('Interaction host must exactly match the Target website host.');
+      }
+      if (!isControlledTestHost(requestedInteractionHost)) {
+        throw new Error(
+          'Interaction host must be localhost, a private IP, or use a dev/test/staging/qa subdomain.'
+        );
+      }
+      controlledTestHost = requestedInteractionHost;
     }
 
     const browserCount = normalizeBrowserCount(config.browserCount);
@@ -95,9 +102,8 @@ export class SeoAutomationManager extends EventEmitter {
     const intervalSec = normalizeAutomationIntervalSeconds(config.intervalSec);
 
     this.stopTimerOnly();
-    this.proxyManager.cancelCurrentValidation();
-    this.proxyManager.stopValidatedProxyStore?.();
-    this.proxyManager.resetRotationHistory();
+    this.proxyManager.cancelCurrentFetch();
+    this.proxyManager.clearAssignments();
     this.generation += 1;
     this.pendingCycle = false;
 
@@ -106,7 +112,7 @@ export class SeoAutomationManager extends EventEmitter {
     this.state = {
       running: true,
       cycleInProgress: true,
-      proxySource: 'ProxyScrape Free API',
+      proxySource: 'High API',
       query,
       currentQuery: keywords[0],
       targetWebsite,
@@ -159,10 +165,6 @@ export class SeoAutomationManager extends EventEmitter {
     };
     this.emitState();
 
-    // Start one independent validation worker for the whole automation
-    // session. Cycle execution never launches its own validation job.
-    this.proxyManager.startValidatedProxyStore?.(browserIds.length);
-
     this.timer = setInterval(() => {
       if (!this.state.running) return;
       this.state = {
@@ -180,8 +182,8 @@ export class SeoAutomationManager extends EventEmitter {
   stop(): SeoAutomationState {
     this.generation += 1;
     this.pendingCycle = false;
-    this.proxyManager.cancelCurrentValidation();
-    this.proxyManager.stopValidatedProxyStore?.();
+    this.proxyManager.cancelCurrentFetch();
+    this.proxyManager.clearAssignments();
     this.stopTimerOnly();
 
     for (const id of this.state.browserIds) {
@@ -255,138 +257,75 @@ export class SeoAutomationManager extends EventEmitter {
 
     const seoTasks: Promise<void>[] = [];
 
-    const onAssignment = (assignment: ProxyAssignment): void => {
-      if (!this.isCurrent(generation)) return;
-      seoTasks.push(
-        this.handleAssignment(
-          generation,
-          cycleNumber,
-          assignment,
-          query,
-          targetWebsite,
-          controlledTestHost,
-          maxPages
-        )
-      );
-    };
-
-    const onProgress = (
-      checked: number,
-      total: number,
-      working: number,
-      assigned: number,
-      fetched: number
-    ): void => {
-      if (!this.isCurrent(generation)) return;
-      this.state = {
-        ...this.state,
-        fetchedProxies: fetched,
-        checkedProxies: checked,
-        totalProxies: total,
-        liveProxies: working,
-        assignedBrowsers: assigned
-      };
-      this.emitState();
-    };
-
     try {
-      // Stop only the previous cycle's automation. Its existing proxy remains
-      // configured until the already-prepared next proxy is swapped in, so
-      // there is no deliberate direct-network window between rotations.
+      // Rotation safety: invalidate every old measurement/Keep Alive worker
+      // before requesting the new cycle's authoritative proxy list.
       for (const id of browserIds) {
         if (!this.isCurrent(generation)) return;
         this.browserManager.cancelMeasurementSession(id);
         this.browserManager.setBrowserKeepAlive(id, false, false);
       }
 
-      if (
-        typeof this.proxyManager.takeValidatedProxy === 'function' &&
-        typeof this.proxyManager.pauseValidatedProxyStore === 'function'
-      ) {
-        // The temporary zone is built DURING the previous cycle. A rotation
-        // never begins browser work until there is one validated proxy ready
-        // for every browser.
-        while (
-          this.isCurrent(generation) &&
-          this.state.cycleNumber === cycleNumber &&
-          (this.proxyManager.getValidatedStoreSize?.() ?? 0) < browserIds.length
-        ) {
-          const stored = this.proxyManager.getValidatedStoreSize?.() ?? 0;
-          if (stored !== this.state.liveProxies) {
-            this.state = { ...this.state, liveProxies: stored };
-            this.emitState();
-          }
-          await sleep(100);
+      this.proxyManager.clearAssignments();
+
+      let cycleProxyLoad: Awaited<ReturnType<ProxyManager['loadCycleProxies']>> | null = null;
+      while (this.isCurrent(generation) && this.state.cycleNumber === cycleNumber) {
+        try {
+          logger.info(
+            'proxy',
+            `[Cycle ${cycleNumber}] Requesting fresh proxies from http://169.58.35.69/data/high.txt`
+          );
+          cycleProxyLoad = await this.proxyManager.loadCycleProxies(browserIds);
+          break;
+        } catch (err) {
+          if (!this.isCurrent(generation) || this.state.cycleNumber !== cycleNumber) return;
+          const message = (err as Error).message;
+          this.state = { ...this.state, lastError: message };
+          this.emitState();
+          logger.warn(
+            'proxy',
+            `[Cycle ${cycleNumber}] Proxy API request failed: ${message}. Retrying in 5 seconds.`
+          );
+          await sleep(5_000);
         }
+      }
 
+      if (!cycleProxyLoad || !this.isCurrent(generation)) return;
+
+      const activeAssignments = cycleProxyLoad.assignments.filter(
+        (assignment): assignment is ProxyAssignment & { proxy: NonNullable<ProxyAssignment['proxy']> } =>
+          Boolean(assignment.proxy)
+      );
+
+      this.state = {
+        ...this.state,
+        fetchedProxies: cycleProxyLoad.rawEntries,
+        checkedProxies: cycleProxyLoad.parsedEntries,
+        totalProxies: cycleProxyLoad.rawEntries,
+        liveProxies: cycleProxyLoad.found,
+        assignedBrowsers: activeAssignments.length,
+        lastError: undefined
+      };
+      this.emitState();
+
+      logger.info(
+        'application',
+        `[Cycle ${cycleNumber}] raw=${cycleProxyLoad.rawEntries}, parsed=${cycleProxyLoad.parsedEntries}, ` +
+          `unique=${cycleProxyLoad.found}, assigned=${activeAssignments.length}/${browserIds.length}, keyword="${query}".`
+      );
+
+      for (const assignment of activeAssignments) {
         if (!this.isCurrent(generation) || this.state.cycleNumber !== cycleNumber) return;
-
-        // Freeze the completed next-rotation zone so no newly validated proxy
-        // can slip into the current rotation while assignments are happening.
-        this.proxyManager.pauseValidatedProxyStore();
-        this.proxyManager.dropCurrentAssignments?.();
-
-        let assigned = 0;
-        const preparedAssignments: ProxyAssignment[] = browserIds.map((browserId) => {
-          const proxy = this.proxyManager.takeValidatedProxy(browserId);
-          if (!proxy) {
-            throw new Error(`Prepared proxy zone did not contain a proxy for Browser ${browserId}.`);
-          }
-          return { browserId, proxy };
-        });
-
-        // Apply every already-validated proxy first. Once all browsers have
-        // successfully accepted their current-cycle proxy, immediately erase
-        // the consumed zone and begin validating the NEXT cycle's proxies.
-        // Google/search work starts only after that advance validator has been
-        // kicked off, maximizing the entire current rotation as prep time.
-        await Promise.all(
-          preparedAssignments.map(async ({ browserId, proxy }) => {
-            await this.browserManager.assignProxy(browserId, proxy);
-            if (!this.isCurrent(generation)) return;
-
-            assigned += 1;
-            this.state = {
-              ...this.state,
-              assignedBrowsers: assigned,
-              liveProxies: this.proxyManager.getValidatedStoreSize?.() ?? 0
-            };
-            this.emitState();
-          })
-        );
-
-        if (!this.isCurrent(generation) || this.state.cycleNumber !== cycleNumber) return;
-
-        // The prepared zone is single-use. Start the next cycle's validation
-        // immediately after current proxies are assigned, before current-cycle
-        // Google automation begins.
-        this.proxyManager.resetValidatedStoreForNextRotation?.(browserIds.length);
-        this.state = {
-          ...this.state,
-          liveProxies: this.proxyManager.getValidatedStoreSize?.() ?? 0
-        };
-        this.emitState();
-
-        await Promise.all(
-          preparedAssignments.map((assignment) =>
-            this.handleAssignment(
-              generation,
-              cycleNumber,
-              assignment,
-              query,
-              targetWebsite,
-              controlledTestHost,
-              maxPages,
-              true
-            )
+        seoTasks.push(
+          this.handleAssignment(
+            generation,
+            cycleNumber,
+            assignment,
+            query,
+            targetWebsite,
+            controlledTestHost,
+            maxPages
           )
-        );
-      } else {
-        // Compatibility path for older test doubles only.
-        await this.proxyManager.fetchValidateAssignStreaming(
-          browserIds,
-          onAssignment,
-          onProgress
         );
       }
 
@@ -403,8 +342,7 @@ export class SeoAutomationManager extends EventEmitter {
 
       logger.info(
         'application',
-        `SEO cycle ${cycleNumber} (${query}) complete: ${this.state.liveProxies} live, ` +
-          `${this.state.assignedBrowsers}/${browserIds.length} browser(s) assigned.`
+        `SEO cycle ${cycleNumber} (${query}) started with ${this.state.assignedBrowsers}/${browserIds.length} browser(s) assigned.`
       );
     } catch (err) {
       if (!this.isCurrent(generation)) return;
@@ -431,24 +369,20 @@ export class SeoAutomationManager extends EventEmitter {
     query: string,
     targetWebsite: string,
     controlledTestHost: string | undefined,
-    maxPages: number,
-    proxyAlreadyAssigned = false
+    maxPages: number
   ): Promise<void> {
     if (!assignment.proxy || !this.isCurrent(generation)) return;
 
     const { browserId, proxy } = assignment;
     try {
-      if (!proxyAlreadyAssigned) {
-        await this.browserManager.assignProxy(browserId, proxy);
-      }
+      await this.browserManager.assignProxy(browserId, proxy);
       if (!this.isCurrent(generation)) return;
 
       this.browserManager.setBrowserKeepAlive(browserId, false, false);
       const measurementToken = this.browserManager.startMeasurementSession(browserId);
 
-      // Run the measurement loop independently of proxy validation. Each
-      // browser keeps observing for the lifetime of this proxy cycle and is
-      // invalidated as soon as the next rotation begins.
+      // Browser work begins only after a proxy has been assigned. The
+      // measurement token is invalidated as soon as the next rotation begins.
       void this.monitorBrowserSession(
         generation,
         cycleNumber,
@@ -485,8 +419,8 @@ export class SeoAutomationManager extends EventEmitter {
     maxPages: number
   ): Promise<void> {
     const observationIntervalMs = 30_000;
-    const interactionHost = controlledTestHost || normalizeTargetHost(targetWebsite);
-    if (!interactionHost) return;
+    const interactionHost = controlledTestHost ? normalizeTargetHost(controlledTestHost) : '';
+    const allowInteraction = Boolean(interactionHost);
 
     while (
       this.isCurrent(generation) &&
@@ -500,7 +434,8 @@ export class SeoAutomationManager extends EventEmitter {
           query,
           targetWebsite,
           maxPages,
-          measurementToken
+          measurementToken,
+          allowInteraction
         );
       } catch (err) {
         if (
@@ -530,6 +465,18 @@ export class SeoAutomationManager extends EventEmitter {
         this.state.cycleNumber !== cycleNumber ||
         !this.browserManager.isMeasurementSessionCurrent(browserId, measurementToken)
       ) {
+        return;
+      }
+
+      if (result.status === 'matched' && !allowInteraction) {
+        this.emit('seoResult', {
+          cycleNumber,
+          result: {
+            ...result,
+            interactionStatus: 'detected',
+            keepAliveStarted: false
+          }
+        });
         return;
       }
 
