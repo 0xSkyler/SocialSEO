@@ -118,12 +118,12 @@ export function SeoTrackerPanel(): JSX.Element {
         </label>
 
         <label>
-          Interaction host (optional test only)
+          Interaction host (optional; auto for test/private targets)
           <input
             value={controlledTestHost}
             disabled={running}
             onChange={(event) => setControlledTestHost(event.target.value)}
-            placeholder="e.g. staging.example.com"
+            placeholder="auto-detected for staging/test/dev/qa targets"
           />
         </label>
 
@@ -202,13 +202,13 @@ export function SeoTrackerPanel(): JSX.Element {
       )}
 
       <div className="tracker-note">
-        Each cycle pulls a fresh proxy list from the configured All Working API, parses and deduplicates
-        it, assigns one proxy per active browser, and discards that response at the next rotation.
+        Each cycle pulls a fresh proxy list from the All Working API, parses and deduplicates it,
+        assigns one proxy per active browser, and discards that response at the next rotation.
         There is no proxy validation or next-cycle proxy buffer. Comma-separated keywords rotate
-        one per cycle and wrap back to the first keyword. Google challenges pause the monitor
-        instead of ending it. Public production targets are measured read-only; automatic result
-        opening and Keep Alive require an explicit localhost/private/dev/test/staging/qa interaction
-        host matching the Target website. Browser sessions remain isolated in memory.
+        one per cycle and wrap back to the first keyword. For localhost/private/dev/test/staging/qa
+        targets, interaction is enabled automatically: an exact matched result is opened, landing
+        is verified, and continuous same-host Keep Alive starts without pressing the Keep Alive
+        button. Google challenges pause the monitor instead of ending it.
       </div>
 
       <div className="tracker-results">
