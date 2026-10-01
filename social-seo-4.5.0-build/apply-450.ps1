@@ -33,7 +33,8 @@ export const PROXY_PROVIDERS: ProxyProviderDefinition[] = [{
 
 export const DEFAULT_PROXY_PROVIDER: ProxyProvider = 'private-api';
 
-export function getProxyProvider(_provider?: ProxyProvider): ProxyProviderDefinition {
+export function getProxyProvider(provider?: ProxyProvider): ProxyProviderDefinition {
+  void provider;
   return PROXY_PROVIDERS[0]!;
 }
 
@@ -306,6 +307,10 @@ $resetCycleBlock = @'
       await this.refreshCurrentPool();
 '@
 $pm = Replace-Once $pm '    this\.refreshPromise = \(async \(\) => \{\r?\n      await this\.refreshCurrentPool\(\);' $resetCycleBlock "reset proxy usage per normal cycle"
+$pm = $pm.Replace("const STORE_CYCLES_PER_GENERATION = 5;" + [Environment]::NewLine, "")
+$pm = $pm.Replace("  private async fetchProviderText(_provider: ProxyProvider): Promise<{ text: string; label: string }> {" + [Environment]::NewLine, "  private async fetchProviderText(provider: ProxyProvider): Promise<{ text: string; label: string }> {" + [Environment]::NewLine + "    void provider;" + [Environment]::NewLine)
+$pm = $pm.Replace("  noteCompletedBrowserCycle(_cycleNumber: number): boolean {" + [Environment]::NewLine + "    return false;", "  noteCompletedBrowserCycle(cycleNumber: number): boolean {" + [Environment]::NewLine + "    void cycleNumber;" + [Environment]::NewLine + "    return false;")
+$pm = $pm.Replace("    _provider?: ProxyProvider," + [Environment]::NewLine + "    _onWorking?: (proxy: ProxyRecord) => void | Promise<void>" + [Environment]::NewLine + "  ): void {" + [Environment]::NewLine + "    this.stopContinuousValidation();", "    provider?: ProxyProvider," + [Environment]::NewLine + "    onWorking?: (proxy: ProxyRecord) => void | Promise<void>" + [Environment]::NewLine + "  ): void {" + [Environment]::NewLine + "    void provider;" + [Environment]::NewLine + "    void onWorking;" + [Environment]::NewLine + "    this.stopContinuousValidation();")
 Write-Text "src\main\ProxyManager.ts" $pm
 
 $pipeline = @'
@@ -444,6 +449,8 @@ $wm = Replace-Once $wm '      if \(isProxyTransportFailure\(error\)\) \{[\s\S]*?
 $wm = $wm.Replace("No validated live proxy is available yet. Retrying the proxy pool automatically; Chromium remains closed.", "No proxy is available from the private API yet. Chromium remains closed.")
 $wm = $wm.Replace("Waiting for a validated live proxy. No direct-network browser launch is allowed.", "Waiting for a proxy from the private API. No direct-network browser launch is allowed.")
 $wm = $wm.Replace("No unused validated live replacement proxy is available yet.", "No unused proxy from the current API pool is available yet.")
+$wm = $wm.Replace("const MAX_IMMEDIATE_PROXY_RETRIES = 5;" + [Environment]::NewLine, "")
+$wm = $wm.Replace("const PROXY_RETRY_BASE_DELAY_MS = 750;" + [Environment]::NewLine, "")
 Write-Text "src\main\WorkspaceManager.ts" $wm
 
 $cp = Read-Text "src\renderer\components\CentralControlPanel.tsx"
@@ -476,6 +483,8 @@ $providerPanel = @'
 
 '@
 $cp = Replace-Once $cp '    <section className="panel proxy-provider-panel">[\s\S]*?    </section>\r?\n\r?\n' $providerPanel "proxy provider panel"
+$cp = Replace-Once $cp '  const importFile = useAppStore\(\(s\) => s\.importFile\);\r?\n' "" "unused importFile selector"
+$cp = Replace-Once $cp '  const validationProgress = useAppStore\(\(s\) => s\.validationProgress\);\r?\n' "" "unused validationProgress selector"
 Write-Text "src\renderer\components\CentralControlPanel.tsx" $cp
 
 $sp = Read-Text "src\renderer\components\SettingsPage.tsx"
