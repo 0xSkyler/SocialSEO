@@ -83,7 +83,7 @@ export function SeoTrackerPanel(): JSX.Element {
         <div>
           <h1>PocketSEO Mobile</h1>
           <p>
-            High API → direct proxy assignment → Google monitoring → challenge pause/resume →
+            All Working API → direct proxy assignment → Google monitoring → challenge pause/resume →
             controlled-test interaction → rotation → fresh API pull.
           </p>
         </div>
@@ -183,7 +183,7 @@ export function SeoTrackerPanel(): JSX.Element {
       </div>
 
       <div className="tracker-status">
-        <span>Source <strong>High API</strong></span>
+        <span>Source <strong>All Working API</strong></span>
         <span>Cycle <strong>{automation?.cycleNumber ?? 0}</strong></span>
         <span>Keyword <strong>{automation?.currentQuery || '—'}</strong></span>
         <span>Received <strong>{automation?.fetchedProxies ?? 0}</strong></span>
