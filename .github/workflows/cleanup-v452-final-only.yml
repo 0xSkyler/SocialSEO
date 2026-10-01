@@ -1,0 +1,133 @@
+name: One-time clean Social SEO v4.5.2 repository
+
+on:
+  push:
+    branches:
+      - cleanup-v4.5.2-final-only
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  clean:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: '0'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+    steps:
+      - name: Checkout cleanup branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct Social SEO 4.4.0 base
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $b64 = (Get-Content "social-seo-4.4.0-payload\source.b64" -Raw).Trim()
+          [IO.File]::WriteAllBytes("social-seo-4.4.0.zip", [Convert]::FromBase64String($b64))
+          New-Item -ItemType Directory -Force -Path buildsrc | Out-Null
+          Expand-Archive -Path "social-seo-4.4.0.zip" -DestinationPath buildsrc -Force
+
+      - name: Apply 4.4.1 patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $b64 = (Get-Content "social-seo-4.4.1-patch\patch.b64" -Raw).Trim()
+          [IO.File]::WriteAllBytes("social-seo-4.4.1-patch.zip", [Convert]::FromBase64String($b64))
+          Expand-Archive -Path "social-seo-4.4.1-patch.zip" -DestinationPath "buildsrc\Social-SEO" -Force
+
+      - name: Apply 4.4.2 patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $parts = @(
+            "social-seo-4.4.2-patch\chunk-0.b64",
+            "social-seo-4.4.2-patch\chunk-1.b64",
+            "social-seo-4.4.2-patch\chunk-2a.b64",
+            "social-seo-4.4.2-patch\chunk-2b.b64",
+            "social-seo-4.4.2-patch\chunk-3.b64",
+            "social-seo-4.4.2-patch\chunk-4.b64"
+          )
+          $b64 = ($parts | ForEach-Object { (Get-Content $_ -Raw).Trim() }) -join ""
+          [IO.File]::WriteAllBytes("social-seo-4.4.2-patch.zip", [Convert]::FromBase64String($b64))
+          Expand-Archive -Path "social-seo-4.4.2-patch.zip" -DestinationPath "buildsrc\Social-SEO" -Force
+
+      - name: Apply final release patches
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          ./social-seo-4.4.3-build/apply-443.ps1
+          ./social-seo-4.5.0-build/apply-450.ps1
+          ./social-seo-4.5.2-build/apply-452.ps1
+
+      - name: Verify reconstructed version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pkg = Get-Content "buildsrc\Social-SEO\package.json" -Raw | ConvertFrom-Json
+          if ($pkg.version -ne "4.5.2") {
+            throw "Expected Social SEO 4.5.2, got $($pkg.version)"
+          }
+          Write-Host "Verified Social SEO version $($pkg.version)"
+
+      - name: Preserve pristine final source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $final = Join-Path $env:RUNNER_TEMP "Social-SEO-4.5.2-final"
+          if (Test-Path $final) { Remove-Item $final -Recurse -Force }
+          Copy-Item "buildsrc\Social-SEO" $final -Recurse -Force
+          @("node_modules", "dist", "release", ".github", ".social-seo-build") | ForEach-Object {
+            $p = Join-Path $final $_
+            if (Test-Path $p) { Remove-Item $p -Recurse -Force }
+          }
+          Write-Host "Pristine final source preserved at $final"
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: buildsrc/Social-SEO
+        run: npm install
+
+      - name: Validate final source
+        shell: pwsh
+        working-directory: buildsrc/Social-SEO
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Replace repository tree with v4.5.2 final source only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $final = Join-Path $env:RUNNER_TEMP "Social-SEO-4.5.2-final"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git rm -r -f --ignore-unmatch .
+          git clean -fdx
+
+          Get-ChildItem -LiteralPath $final -Force | ForEach-Object {
+            Copy-Item $_.FullName -Destination $env:GITHUB_WORKSPACE -Recurse -Force
+          }
+
+          git add -A
+
+          $status = git status --porcelain
+          if (-not $status) {
+            Write-Host "No cleanup changes were necessary."
+            exit 0
+          }
+
+          git commit -m "Clean repository to Social SEO v4.5.2 final source only"
+          git push origin HEAD:cleanup-v4.5.2-final-only
