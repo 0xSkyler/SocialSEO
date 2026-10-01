@@ -11,7 +11,7 @@ import {
   normalizeSeoMaxPages,
   parseAutomationKeywords
 } from '../shared/types/automation';
-import { isControlledTestHost, normalizeTargetHost } from '../shared/seo';
+import { normalizeTargetHost } from '../shared/seo';
 import { HIGH_PROXY_URL } from '../proxy/HighProxyProvider';
 import type { BrowserManager } from './BrowserManager';
 import type { ProxyManager } from './ProxyManager';
@@ -82,21 +82,15 @@ export class SeoAutomationManager extends EventEmitter {
     if (keywords.length === 0) throw new Error('Enter at least one Google search keyword.');
     if (!targetHost) throw new Error('Enter a valid target website or site name.');
 
-    // Controlled test/private targets automatically enable the interaction
-    // path. Explicit overrides must still be the exact same controlled host.
+    // Interaction is explicitly enabled for a target the user controls.
+    // The interaction host must be exactly the same as the Target website,
+    // but no staging/dev/test hostname naming convention is required.
     let controlledTestHost: string | undefined;
     if (requestedInteractionHost) {
       if (requestedInteractionHost !== targetHost) {
-        throw new Error('Interaction host must exactly match the Target website host.');
-      }
-      if (!isControlledTestHost(requestedInteractionHost)) {
-        throw new Error(
-          'Interaction host must be localhost, a private IP, or use a dev/test/staging/qa subdomain.'
-        );
+        throw new Error('Interaction target must exactly match the Target website host.');
       }
       controlledTestHost = requestedInteractionHost;
-    } else if (isControlledTestHost(targetHost)) {
-      controlledTestHost = targetHost;
     }
 
     const browserCount = normalizeBrowserCount(config.browserCount);
