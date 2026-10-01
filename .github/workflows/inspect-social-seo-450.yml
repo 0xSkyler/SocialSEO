@@ -44,7 +44,11 @@ jobs:
       - name: Print key source files
         shell: bash
         run: |
-          for f in             buildsrc/Social-SEO/package.json             buildsrc/Social-SEO/src/shared/proxySource.ts             buildsrc/Social-SEO/src/shared/types/settings.ts             buildsrc/Social-SEO/src/main/ProxyManager.ts             buildsrc/Social-SEO/src/main/WorkspaceManager.ts             buildsrc/Social-SEO/src/main/proxyPipeline.ts             buildsrc/Social-SEO/src/main/registerIpc.ts             buildsrc/Social-SEO/src/preload/index.ts             buildsrc/Social-SEO/src/renderer/components/CentralControlPanel.tsx             buildsrc/Social-SEO/src/renderer/store/appStore.ts             buildsrc/Social-SEO/src/renderer/App.tsx             buildsrc/Social-SEO/src/main/SettingsManager.ts; do
+          for f in             buildsrc/Social-SEO/package.json             buildsrc/Social-SEO/src/shared/proxySource.ts             buildsrc/Social-SEO/src/shared/types/settings.ts             buildsrc/Social-SEO/src/main/ProxyManager.ts             buildsrc/Social-SEO/src/main/WorkspaceManager.ts             buildsrc/Social-SEO/src/main/proxyPipeline.ts             buildsrc/Social-SEO/src/main/registerIpc.ts             buildsrc/Social-SEO/src/preload/index.ts             buildsrc/Social-SEO/src/renderer/components/CentralControlPanel.tsx             buildsrc/Social-SEO/src/renderer/store/appStore.ts             buildsrc/Social-SEO/src/renderer/App.tsx             buildsrc/Social-SEO/src/main/SettingsManager.ts \
+            buildsrc/Social-SEO/src/renderer/components/SettingsPage.tsx \
+            buildsrc/Social-SEO/src/renderer/stores/appStore.ts \
+            buildsrc/Social-SEO/src/main/ipc/registerIpc.ts \
+            buildsrc/Social-SEO/src/preload.ts; do
               echo "===== FILE: $f ====="
               if [ -f "$f" ]; then cat "$f"; else echo "MISSING"; fi
               echo "===== END FILE ====="
