@@ -520,6 +520,26 @@ describe('private proxy API', () => {
 '@
 Write-Text "tests\proxyProviders.test.ts" $providersTest
 
+$legacySourceTest = @'
+import { describe, expect, it } from 'vitest';
+import { CUSTOM_PROXY_API_URL, PROXYSCRAPE_API_URL } from '../src/shared/proxySource';
+import { ProxyParser } from '../src/main/ProxyParser';
+
+describe('Private proxy API source', () => {
+  it('uses the configured high.txt endpoint', () => {
+    expect(CUSTOM_PROXY_API_URL).toBe('http://169.58.35.69/data/high.txt');
+    expect(PROXYSCRAPE_API_URL).toBe(CUSTOM_PROXY_API_URL);
+  });
+
+  it('parses supported proxy formats without validation', () => {
+    const parser = new ProxyParser();
+    const result = parser.parse('http://127.0.0.1:8080\nsocks5://127.0.0.2:1080\n');
+    expect(result.proxies.length).toBe(2);
+  });
+});
+'@
+Write-Text "tests\proxyScrapeSource.test.ts" $legacySourceTest
+
 $timeoutTest = @'
 import fs from 'node:fs';
 import path from 'node:path';
