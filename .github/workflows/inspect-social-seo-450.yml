@@ -1,0 +1,51 @@
+name: Inspect Social SEO 4.4.3 Reconstructed Source
+
+on:
+  push:
+    branches:
+      - social-seo-4.5.0-build
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct 4.4.3 source
+        shell: pwsh
+        run: |
+          $b64 = (Get-Content "social-seo-4.4.0-payload/source.b64" -Raw).Trim()
+          [IO.File]::WriteAllBytes("social-seo-4.4.0.zip", [Convert]::FromBase64String($b64))
+          New-Item -ItemType Directory -Force -Path buildsrc | Out-Null
+          Expand-Archive -Path "social-seo-4.4.0.zip" -DestinationPath buildsrc -Force
+
+          $b64 = (Get-Content "social-seo-4.4.1-patch/patch.b64" -Raw).Trim()
+          [IO.File]::WriteAllBytes("social-seo-4.4.1-patch.zip", [Convert]::FromBase64String($b64))
+          Expand-Archive -Path "social-seo-4.4.1-patch.zip" -DestinationPath "buildsrc/Social-SEO" -Force
+
+          $parts = @(
+            "social-seo-4.4.2-patch/chunk-0.b64",
+            "social-seo-4.4.2-patch/chunk-1.b64",
+            "social-seo-4.4.2-patch/chunk-2a.b64",
+            "social-seo-4.4.2-patch/chunk-2b.b64",
+            "social-seo-4.4.2-patch/chunk-3.b64",
+            "social-seo-4.4.2-patch/chunk-4.b64"
+          )
+          $b64 = ($parts | ForEach-Object { (Get-Content $_ -Raw).Trim() }) -join ""
+          [IO.File]::WriteAllBytes("social-seo-4.4.2-patch.zip", [Convert]::FromBase64String($b64))
+          Expand-Archive -Path "social-seo-4.4.2-patch.zip" -DestinationPath "buildsrc/Social-SEO" -Force
+
+          Copy-Item "social-seo-4.4.3-build/apply-443.ps1" "apply-443.ps1"
+          ./apply-443.ps1
+
+      - name: Print key source files
+        shell: bash
+        run: |
+          for f in             buildsrc/Social-SEO/package.json             buildsrc/Social-SEO/src/shared/proxySource.ts             buildsrc/Social-SEO/src/shared/types/settings.ts             buildsrc/Social-SEO/src/main/ProxyManager.ts             buildsrc/Social-SEO/src/main/WorkspaceManager.ts             buildsrc/Social-SEO/src/main/proxyPipeline.ts             buildsrc/Social-SEO/src/main/registerIpc.ts             buildsrc/Social-SEO/src/preload/index.ts             buildsrc/Social-SEO/src/renderer/components/CentralControlPanel.tsx             buildsrc/Social-SEO/src/renderer/store/appStore.ts             buildsrc/Social-SEO/src/renderer/App.tsx             buildsrc/Social-SEO/src/main/SettingsManager.ts; do
+              echo "===== FILE: $f ====="
+              if [ -f "$f" ]; then cat "$f"; else echo "MISSING"; fi
+              echo "===== END FILE ====="
+          done
