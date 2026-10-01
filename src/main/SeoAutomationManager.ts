@@ -82,9 +82,10 @@ export class SeoAutomationManager extends EventEmitter {
     if (keywords.length === 0) throw new Error('Enter at least one Google search keyword.');
     if (!targetHost) throw new Error('Enter a valid target website or site name.');
 
-    // Public production targets remain read-only. Autonomous result opening
-    // and Keep Alive are enabled only when the user explicitly supplies the
-    // exact same host and it is clearly a controlled test/private environment.
+    // Test/private targets automatically enable exact-result interaction and
+    // continuous Keep Alive. An explicit interaction host is still accepted,
+    // but must exactly match the target and remain within the controlled-test
+    // host rules.
     let controlledTestHost: string | undefined;
     if (requestedInteractionHost) {
       if (requestedInteractionHost !== targetHost) {
@@ -96,6 +97,8 @@ export class SeoAutomationManager extends EventEmitter {
         );
       }
       controlledTestHost = requestedInteractionHost;
+    } else if (isControlledTestHost(targetHost)) {
+      controlledTestHost = targetHost;
     }
 
     const browserCount = normalizeBrowserCount(config.browserCount);
