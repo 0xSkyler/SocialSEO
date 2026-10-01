@@ -83,7 +83,7 @@ export function SeoTrackerPanel(): JSX.Element {
         <div>
           <h1>ProxyDesk SEO Tracker Lite</h1>
           <p>
-            High API → direct proxy assignment → Google monitoring → challenge pause/resume →
+            All Working API → direct proxy assignment → Google monitoring → challenge pause/resume →
             controlled-test interaction → rotation → fresh API pull.
           </p>
         </div>
@@ -183,7 +183,7 @@ export function SeoTrackerPanel(): JSX.Element {
       </div>
 
       <div className="tracker-status">
-        <span>Source <strong>High API</strong></span>
+        <span>Source <strong>All Working API</strong></span>
         <span>Cycle <strong>{automation?.cycleNumber ?? 0}</strong></span>
         <span>Keyword <strong>{automation?.currentQuery || '—'}</strong></span>
         <span>Received <strong>{automation?.fetchedProxies ?? 0}</strong></span>
@@ -202,7 +202,7 @@ export function SeoTrackerPanel(): JSX.Element {
       )}
 
       <div className="tracker-note">
-        Each cycle pulls a fresh proxy list from the configured High API, parses and deduplicates
+        Each cycle pulls a fresh proxy list from the configured All Working API, parses and deduplicates
         it, assigns one proxy per active browser, and discards that response at the next rotation.
         There is no proxy validation or next-cycle proxy buffer. Comma-separated keywords rotate
         one per cycle and wrap back to the first keyword. Google challenges pause the monitor
