@@ -23,7 +23,7 @@ export interface ProxyProviderDefinition {
   feeds: ProxyProviderFeed[];
 }
 
-export const CUSTOM_PROXY_API_URL = 'http://169.58.35.69/data/high.txt';
+export const CUSTOM_PROXY_API_URL = 'http://169.58.35.69/data/elite.txt';
 
 export const PROXY_PROVIDERS: ProxyProviderDefinition[] = [{
   id: 'private-api',
@@ -490,7 +490,7 @@ Write-Text "src\renderer\components\CentralControlPanel.tsx" $cp
 $sp = Read-Text "src\renderer\components\SettingsPage.tsx"
 $sourcePanel = @'
       <section className="panel setting-section"><h2>Proxy source</h2>
-        <div className="info-box"><strong>Private API only</strong><p>Proxies are fetched from http://169.58.35.69/data/high.txt and assigned directly. There is no proxy validation, latency testing, provider selection, or manual proxy file workflow.</p></div>
+        <div className="info-box"><strong>Private API only</strong><p>Proxies are fetched from http://169.58.35.69/data/elite.txt and assigned directly. There is no proxy validation, latency testing, provider selection, or manual proxy file workflow.</p></div>
         <small>Each normal rotation cycle refreshes the API pool. Failed proxies are excluded from the current cycle, and Chromium never falls back to the direct VPS network.</small>
       </section>
 '@
@@ -503,7 +503,7 @@ $appFile = $appFile.Replace("Preparing browser slots and proxies…", "Preparing
 Write-Text "src\renderer\App.tsx" $appFile
 
 $pkg = Read-Text "package.json"
-$pkg = $pkg.Replace('"version": "4.4.3"', '"version": "4.5.0"')
+$pkg = $pkg.Replace('"version": "4.5.1"', '"version": "4.5.0"')
 Write-Text "package.json" $pkg
 
 $providersTest = @'
@@ -514,7 +514,7 @@ describe('private proxy API', () => {
   it('uses exactly one fixed proxy source', () => {
     expect(DEFAULT_PROXY_PROVIDER).toBe('private-api');
     expect(PROXY_PROVIDERS).toHaveLength(1);
-    expect(CUSTOM_PROXY_API_URL).toBe('http://169.58.35.69/data/high.txt');
+    expect(CUSTOM_PROXY_API_URL).toBe('http://169.58.35.69/data/elite.txt');
   });
 });
 '@
@@ -526,7 +526,7 @@ import { CUSTOM_PROXY_API_URL, PROXYSCRAPE_API_URL } from '../src/shared/proxySo
 
 describe('Private proxy API source', () => {
   it('uses only the configured high.txt endpoint', () => {
-    expect(CUSTOM_PROXY_API_URL).toBe('http://169.58.35.69/data/high.txt');
+    expect(CUSTOM_PROXY_API_URL).toBe('http://169.58.35.69/data/elite.txt');
     expect(PROXYSCRAPE_API_URL).toBe(CUSTOM_PROXY_API_URL);
   });
 });
@@ -561,7 +561,7 @@ import { describe, expect, it } from 'vitest';
 const root = path.resolve(__dirname, '..');
 const read = (relative: string) => fs.readFileSync(path.join(root, relative), 'utf8');
 
-describe('Social SEO 4.5.0 lightweight architecture', () => {
+describe('Social SEO 4.5.1 lightweight architecture', () => {
   it('trusts the private API without a validator pipeline', () => {
     const pipeline = read('src/main/proxyPipeline.ts');
     expect(pipeline).not.toContain('startContinuousValidation');
@@ -593,14 +593,14 @@ const proxyManager = read('src/main/ProxyManager.ts');
 const workspace = read('src/main/WorkspaceManager.ts');
 const panel = read('src/renderer/components/CentralControlPanel.tsx');
 
-assert.equal(source.includes('http://169.58.35.69/data/high.txt'), true);
+assert.equal(source.includes('http://169.58.35.69/data/elite.txt'), true);
 assert.equal(source.includes("id: 'private-api'"), true);
 assert.equal(proxyManager.includes('refreshForBrowserCycle'), true);
 assert.equal(workspace.includes('INITIAL_PAGE_LOAD_TIMEOUT_MS = 10_000'), true);
 assert.equal(workspace.includes('No direct-network browser launch is allowed.'), true);
 assert.equal(panel.includes('Private API · direct assignment'), true);
-console.log('Social SEO 4.5.0 final smoke checks passed.');
+console.log('Social SEO 4.5.1 final smoke checks passed.');
 '@
 Write-Text "scripts\final-smoke.cjs" $smoke
 
-Write-Host "Applied Social SEO 4.5.0 private-API/no-validation refactor."
+Write-Host "Applied Social SEO 4.5.1 private-API/no-validation refactor using elite.txt."
