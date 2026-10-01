@@ -35,7 +35,7 @@ win:
       arch:
         - x64
   icon: build/icons/pocketseo-mobile.png
-  artifactName: PocketSEO-Mobile-Setup-1.0.0.${ext}
+  artifactName: PocketSEO-Mobile-HighAPI-Setup.${ext}
 
 nsis:
   oneClick: false
@@ -44,7 +44,7 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: PocketSEO Mobile
-  artifactName: PocketSEO-Mobile-Setup-1.0.0.${ext}
+  artifactName: PocketSEO-Mobile-HighAPI-Setup.${ext}
 
 # Linux/mac targets are not required by this project (Windows-only deliverable)
 # but are left buildable for local development on other platforms.
