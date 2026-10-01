@@ -855,3 +855,90 @@ describe('Google live-result observation', () => {
     expect(webContents.stop).toHaveBeenCalled();
   });
 });
+
+
+describe('Google target detection resilience', () => {
+  it('detects a direct target destination even when Google title/snippet omit query tokens and href is data-href', () => {
+    const targetUrl = 'https://staging.example.com/article/direct-target';
+    const anchor = {
+      href: '',
+      innerText: 'Unexpected Result Title',
+      parentElement: null as unknown,
+      target: '',
+      getAttribute: (name: string) => {
+        if (name === 'href') return null;
+        if (name === 'data-href') return targetUrl;
+        if (name === 'data-url') return null;
+        if (name === 'aria-label') return 'Unexpected Result Title';
+        return null;
+      },
+      querySelector: (selector: string) =>
+        selector === 'h3,h2,h1' || selector === 'h3'
+          ? { innerText: 'Unexpected Result Title' }
+          : null,
+      getBoundingClientRect: () => ({
+        left: 40,
+        top: 180,
+        width: 420,
+        height: 36,
+        right: 460,
+        bottom: 216
+      }),
+      scrollIntoView: vi.fn(),
+      focus: vi.fn(),
+      click: vi.fn()
+    };
+
+    const card = {
+      innerText: 'staging.example.com\nUnexpected Result Title\nA result snippet with unrelated words.',
+      parentElement: null as unknown,
+      querySelectorAll: (selector: string) =>
+        selector.includes('a[') ? [anchor] : []
+    };
+    anchor.parentElement = card;
+
+    const root = {
+      innerText: card.innerText,
+      querySelectorAll: (selector: string) => {
+        if (selector.includes('a[')) return [anchor];
+        if (selector.includes('cite') || selector.includes('h3')) return [];
+        return [];
+      }
+    };
+    const document = {
+      body: { innerText: card.innerText },
+      documentElement: {},
+      querySelector: (selector: string) => (selector === '#search' ? root : null)
+    };
+    const location = { href: 'https://www.google.com/search?q=completely+different+query' };
+    const windowObject: Record<string, unknown> = { location };
+
+    class MutationObserverMock {
+      constructor(_callback: () => void) {}
+      observe(): void {}
+      disconnect(): void {}
+    }
+
+    const state = vm.runInNewContext(
+      buildInstallGoogleLiveTargetObserverScript(
+        'staging.example.com',
+        'completely different query'
+      ),
+      {
+        window: windowObject,
+        document,
+        location,
+        URL,
+        MutationObserver: MutationObserverMock,
+        setInterval: () => 1,
+        clearInterval: () => undefined,
+        Date
+      }
+    ) as {
+      match?: { url: string; title: string };
+    };
+
+    expect(state.match?.url).toBe(targetUrl);
+    expect(state.match?.title).toBe('Unexpected Result Title');
+  });
+});
