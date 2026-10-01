@@ -1,7 +1,7 @@
 import type { ProxyRecord } from '../shared/types/proxy';
 import { ProxyParser, toProxyRecord } from './ProxyParser';
 
-export const HIGH_PROXY_URL = 'http://169.58.35.69/data/high.txt';
+export const HIGH_PROXY_URL = 'http://169.58.35.69/data/all-working.txt';
 const SOURCE_NAME = 'High API';
 const REQUEST_TIMEOUT_MS = 15_000;
 
