@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - main
-      - feature/loading-keepalive-watchdog-0.5.4
+      - feature/v0.5.4-multikeyword-allworking-direct
     tags:
       - 'v*'
   pull_request:
@@ -42,19 +42,19 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Smoke check ProxyScrape public API
+      - name: Smoke check All Working proxy API
         shell: pwsh
         run: |
-          $url = "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text&limit=25&timeout=4000"
+          $url = "http://169.58.35.69/data/all-working.txt"
           $response = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 20
           if ($response.StatusCode -ne 200) {
-            throw "ProxyScrape API returned HTTP $($response.StatusCode)"
+            throw "All Working API returned HTTP $($response.StatusCode)"
           }
           $body = [string]$response.Content
           if ($body -notmatch '(?m)^(?:(?:http|https|socks4|socks5)://)?[^\s:]+:\d+\s*$') {
-            throw "ProxyScrape API did not return parseable proxy entries."
+            throw "All Working API did not return parseable proxy entries."
           }
-          Write-Host "ProxyScrape API smoke check passed."
+          Write-Host "All Working API smoke check passed."
 
       - name: Build renderer + main
         run: npm run build
