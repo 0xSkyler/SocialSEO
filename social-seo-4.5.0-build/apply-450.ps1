@@ -299,6 +299,13 @@ $newClear = @'
     this.emitChanged();
 '@
 $pm = Replace-Once $pm '    this\.lastProviderRefreshAt = 0;\r?\n    this\.emitChanged\(\);' $newClear "clear state"
+$pm = $pm.Replace("return this.fetchProvider('proxyscrape');", "return this.fetchProvider('private-api');")
+$resetCycleBlock = @'
+    this.refreshPromise = (async () => {
+      this.resetProxyCycle();
+      await this.refreshCurrentPool();
+'@
+$pm = Replace-Once $pm '    this\.refreshPromise = \(async \(\) => \{\r?\n      await this\.refreshCurrentPool\(\);' $resetCycleBlock "reset proxy usage per normal cycle"
 Write-Text "src\main\ProxyManager.ts" $pm
 
 $pipeline = @'
