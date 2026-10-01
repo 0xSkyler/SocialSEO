@@ -1,0 +1,1 @@
+Publish verified Social SEO 4.5.1 installer as a direct GitHub Release EXE.
