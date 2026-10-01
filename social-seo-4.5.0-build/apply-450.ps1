@@ -503,7 +503,7 @@ $appFile = $appFile.Replace("Preparing browser slots and proxies…", "Preparing
 Write-Text "src\renderer\App.tsx" $appFile
 
 $pkg = Read-Text "package.json"
-$pkg = $pkg.Replace('"version": "4.5.1"', '"version": "4.5.0"')
+$pkg = $pkg.Replace('"version": "4.4.3"', '"version": "4.5.1"')
 Write-Text "package.json" $pkg
 
 $providersTest = @'
