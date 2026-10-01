@@ -39,8 +39,8 @@ export function SeoTrackerPanel(): JSX.Element {
   );
 
   async function start(): Promise<void> {
-    if (!query.trim() || !targetWebsite.trim()) {
-      pushToast('Enter both a keyword and target website.', 'error');
+    if (!query.split(',').some((keyword) => keyword.trim()) || !targetWebsite.trim()) {
+      pushToast('Enter at least one keyword and a target website.', 'error');
       return;
     }
 
@@ -83,7 +83,7 @@ export function SeoTrackerPanel(): JSX.Element {
         <div>
           <h1>ProxyDesk SEO Tracker Lite</h1>
           <p>
-            ProxyScrape API → validation → Google monitoring → challenge pause/resume →
+            All Working API → direct proxy assignment → Google monitoring → challenge pause/resume →
             exact-host result opening → 2-scroll article hopping → rotation.
           </p>
         </div>
@@ -98,12 +98,12 @@ export function SeoTrackerPanel(): JSX.Element {
 
       <div className="tracker-controls">
         <label>
-          Keyword
+          Keywords (comma separated)
           <input
             value={query}
             disabled={running}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="rmg cutting"
+            placeholder="keyword A, keyword B, keyword C"
           />
         </label>
 
@@ -183,13 +183,13 @@ export function SeoTrackerPanel(): JSX.Element {
       </div>
 
       <div className="tracker-status">
-        <span>Source <strong>ProxyScrape Free API</strong></span>
+        <span>Source <strong>All Working API</strong></span>
         <span>Cycle <strong>{automation?.cycleNumber ?? 0}</strong></span>
         <span>Fetched <strong>{automation?.fetchedProxies ?? 0}</strong></span>
         <span>
-          Validated <strong>{automation?.checkedProxies ?? 0}/{automation?.totalProxies ?? 0}</strong>
+          Parsed <strong>{automation?.checkedProxies ?? 0}/{automation?.totalProxies ?? 0}</strong>
         </span>
-        <span>Live <strong>{automation?.liveProxies ?? 0}</strong></span>
+        <span>Available <strong>{automation?.liveProxies ?? 0}</strong></span>
         <span>
           Assigned <strong>{automation?.assignedBrowsers ?? 0}/{automation?.browserIds.length ?? 0}</strong>
         </span>
@@ -201,7 +201,7 @@ export function SeoTrackerPanel(): JSX.Element {
       )}
 
       <div className="tracker-note">
-        Each proxy session continuously monitors the saved keyword + website. Google
+        Each proxy session continuously monitors the active keyword + website. Comma-separated keywords rotate one per cycle. Google
         challenges pause the monitor instead of ending it; when normal results return in
         the same session, scanning resumes. The Target website is the interaction host by
         default. A matched result must either open that exact host and start Keep Alive, or
