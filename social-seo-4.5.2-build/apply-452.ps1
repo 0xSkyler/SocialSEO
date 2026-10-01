@@ -36,10 +36,6 @@ if (-not $wm.Contains($newCondition)) {
   $wm = $wm.Replace($oldCondition, $newCondition)
 }
 
-$wm = $wm.Replace(
-  "error: 'Proxy/network error detected. Rotating immediately.'",
-  "error: 'Navigation/proxy error detected. Rotating immediately.'"
-)
 
 Write-Text $wmPath $wm
 
@@ -62,7 +58,6 @@ describe('navigation error proxy rotation', () => {
     expect(manager).toContain('function isPageGotoFailure(error: unknown): boolean');
     expect(manager).toContain("return message.includes('page.goto')");
     expect(manager).toContain('if (isPageGotoFailure(error) || isProxyTransportFailure(error))');
-    expect(manager).toContain('Navigation/proxy error detected. Rotating immediately.');
     expect(manager).toContain('this.proxies.markAssignedProxyDead(id, message)');
     expect(manager).toContain('await this.proxies.ensureWorkingProxy(id)');
   });
