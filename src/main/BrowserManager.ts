@@ -564,7 +564,8 @@ export class BrowserManager extends EventEmitter {
     query: string,
     targetWebsite: string,
     maxPages = 20,
-    measurementToken?: number
+    measurementToken?: number,
+    allowInteraction = true
   ): Promise<BroadcastSearchResult> {
     const managed = this.get(id);
     const wc = managed.view.webContents;
@@ -773,9 +774,31 @@ export class BrowserManager extends EventEmitter {
           pageMaxObserved = Math.max(pageMaxObserved, watcher.observedResults || 0);
 
           if (watcher.match) {
-            // Match detection and first click are deliberately coupled to the
-            // same page watcher so Google cannot paginate between them.
             const matched = watcher.match;
+
+            // Public/production measurements are read-only. The same robust
+            // live DOM watcher reports the exact result but performs no click.
+            if (!allowInteraction) {
+              void wc.executeJavaScript(buildStopGoogleLiveTargetObserverScript(), true).catch(() => undefined);
+              totalScanned += pageMaxObserved;
+              return {
+                browserId: id,
+                status: 'matched',
+                landedUrl: wc.getURL(),
+                matchedUrl: matched.url,
+                matchedTitle: matched.title,
+                resultsScanned: totalScanned,
+                position: pageIndex * 10 + matched.organicIndex + 1,
+                resultPage: pageIndex + 1,
+                monitoring: true,
+                interactionStatus: 'detected',
+                keepAliveStarted: false,
+                ranAt
+              };
+            }
+
+            // Controlled-host interaction stays coupled to the exact result
+            // captured by the live page watcher.
             let clickResult = false;
 
             if (
