@@ -307,7 +307,7 @@ $resetCycleBlock = @'
       await this.refreshCurrentPool();
 '@
 $pm = Replace-Once $pm '    this\.refreshPromise = \(async \(\) => \{\r?\n      await this\.refreshCurrentPool\(\);' $resetCycleBlock "reset proxy usage per normal cycle"
-$pm = $pm.Replace("const STORE_CYCLES_PER_GENERATION = 5;" + [Environment]::NewLine, "")
+$pm = Replace-Once $pm 'const STORE_CYCLES_PER_GENERATION = 5;\r?\n' "" "obsolete store-cycle constant"
 $pm = $pm.Replace("  private async fetchProviderText(_provider: ProxyProvider): Promise<{ text: string; label: string }> {" + [Environment]::NewLine, "  private async fetchProviderText(provider: ProxyProvider): Promise<{ text: string; label: string }> {" + [Environment]::NewLine + "    void provider;" + [Environment]::NewLine)
 $pm = $pm.Replace("  noteCompletedBrowserCycle(_cycleNumber: number): boolean {" + [Environment]::NewLine + "    return false;", "  noteCompletedBrowserCycle(cycleNumber: number): boolean {" + [Environment]::NewLine + "    void cycleNumber;" + [Environment]::NewLine + "    return false;")
 $pm = $pm.Replace("    _provider?: ProxyProvider," + [Environment]::NewLine + "    _onWorking?: (proxy: ProxyRecord) => void | Promise<void>" + [Environment]::NewLine + "  ): void {" + [Environment]::NewLine + "    this.stopContinuousValidation();", "    provider?: ProxyProvider," + [Environment]::NewLine + "    onWorking?: (proxy: ProxyRecord) => void | Promise<void>" + [Environment]::NewLine + "  ): void {" + [Environment]::NewLine + "    void provider;" + [Environment]::NewLine + "    void onWorking;" + [Environment]::NewLine + "    this.stopContinuousValidation();")
@@ -449,8 +449,8 @@ $wm = Replace-Once $wm '      if \(isProxyTransportFailure\(error\)\) \{[\s\S]*?
 $wm = $wm.Replace("No validated live proxy is available yet. Retrying the proxy pool automatically; Chromium remains closed.", "No proxy is available from the private API yet. Chromium remains closed.")
 $wm = $wm.Replace("Waiting for a validated live proxy. No direct-network browser launch is allowed.", "Waiting for a proxy from the private API. No direct-network browser launch is allowed.")
 $wm = $wm.Replace("No unused validated live replacement proxy is available yet.", "No unused proxy from the current API pool is available yet.")
-$wm = $wm.Replace("const MAX_IMMEDIATE_PROXY_RETRIES = 5;" + [Environment]::NewLine, "")
-$wm = $wm.Replace("const PROXY_RETRY_BASE_DELAY_MS = 750;" + [Environment]::NewLine, "")
+$wm = Replace-Once $wm 'const MAX_IMMEDIATE_PROXY_RETRIES = 5;\r?\n' "" "obsolete max retry constant"
+$wm = Replace-Once $wm 'const PROXY_RETRY_BASE_DELAY_MS = 750;\r?\n' "" "obsolete retry-delay constant"
 Write-Text "src\main\WorkspaceManager.ts" $wm
 
 $cp = Read-Text "src\renderer\components\CentralControlPanel.tsx"
