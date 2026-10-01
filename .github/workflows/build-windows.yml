@@ -45,7 +45,7 @@ jobs:
       - name: Smoke check High proxy API
         shell: pwsh
         run: |
-          $url = "http://169.58.35.69/data/high.txt"
+          $url = "http://169.58.35.69/data/all-working.txt"
           $response = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 20
           if ($response.StatusCode -ne 200) {
             throw "High proxy API returned HTTP $($response.StatusCode)"
