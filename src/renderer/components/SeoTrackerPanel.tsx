@@ -118,12 +118,12 @@ export function SeoTrackerPanel(): JSX.Element {
         </label>
 
         <label>
-          Interaction host (optional)
+          Interaction host (optional test only)
           <input
             value={controlledTestHost}
             disabled={running}
             onChange={(event) => setControlledTestHost(event.target.value)}
-            placeholder="Leave blank to use Target website"
+            placeholder="e.g. staging.example.com"
           />
         </label>
 
