@@ -63,7 +63,6 @@ export async function fetchHighProxyBatch(
   try {
     const response = await fetch(HIGH_PROXY_URL, {
       method: 'GET',
-      cache: 'no-store',
       headers: {
         Accept: 'text/plain',
         'Cache-Control': 'no-cache',
