@@ -269,6 +269,89 @@ describe('SeoAutomationManager direct High API workflow', () => {
     manager.stop();
   });
 
+
+  it('auto-enables controlled test interaction when the target itself is a staging host', async () => {
+    const host = 'staging.example.com';
+    const p = proxy('auto-controlled');
+    const proxyManager = {
+      cancelCurrentFetch() {},
+      clearAssignments() {},
+      async loadCycleProxies(browserIds: number[]) {
+        return loadResult(browserIds, [p]);
+      }
+    } as unknown as ProxyManager;
+
+    let token = 0;
+    let allowInteractionSeen = false;
+    let clickCalls = 0;
+    let keepAliveCalls = 0;
+
+    const browserManager = {
+      cancelMeasurementSession() {},
+      setBrowserKeepAlive() {},
+      async assignProxy() {},
+      startMeasurementSession() {
+        token += 1;
+        return token;
+      },
+      isMeasurementSessionCurrent(_id: number, current: number) {
+        return current === token;
+      },
+      async broadcastSearch(
+        id: number,
+        _query: string,
+        _target: string,
+        _maxPages: number,
+        _token: number,
+        allowInteraction: boolean
+      ): Promise<BroadcastSearchResult> {
+        allowInteractionSeen = allowInteraction;
+        return {
+          browserId: id,
+          status: 'matched',
+          landedUrl: 'https://www.google.com/search?q=test',
+          matchedUrl: 'https://' + host + '/article',
+          matchedTitle: 'Article',
+          monitoring: true,
+          ranAt: new Date().toISOString()
+        };
+      },
+      async clickControlledGoogleResult() {
+        clickCalls += 1;
+        return true;
+      },
+      startControlledKeepAlive() {
+        keepAliveCalls += 1;
+      },
+      async waitForGoogleRecovery() {
+        return true;
+      }
+    } as unknown as BrowserManager;
+
+    const manager = new SeoAutomationManager(proxyManager, browserManager, async () => [1]);
+    const opened = new Promise<BroadcastSearchResult>((resolve) => {
+      manager.on('seoResult', ({ result }) => {
+        if (result.keepAliveStarted) resolve(result);
+      });
+    });
+
+    await manager.start({
+      query: 'A',
+      targetWebsite: host,
+      intervalSec: 600,
+      browserCount: 1,
+      maxPages: 20
+    });
+
+    const result = await opened;
+    expect(allowInteractionSeen).toBe(true);
+    expect(clickCalls).toBe(1);
+    expect(keepAliveCalls).toBe(1);
+    expect(result.interactionStatus).toBe('opened');
+    expect(result.keepAliveStarted).toBe(true);
+    manager.stop();
+  });
+
   it('rejects a production interaction-host override', async () => {
     const manager = new SeoAutomationManager(
       { cancelCurrentFetch() {}, clearAssignments() {} } as unknown as ProxyManager,
