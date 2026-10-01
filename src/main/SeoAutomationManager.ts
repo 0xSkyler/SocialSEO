@@ -26,7 +26,7 @@ export declare interface SeoAutomationManager {
 /**
  * Single-purpose SEO Tracker orchestration:
  *
- * ProxyScrape free API -> local validation -> immediate exclusive assignment
+ * All Working API -> direct exclusive assignment
  * -> continuous Google monitoring -> challenge pause/resume
  * -> exact-host result click -> repeating same-host Keep Alive
  * -> rotate and restart on the user-configured cadence.
@@ -40,7 +40,7 @@ export class SeoAutomationManager extends EventEmitter {
   private state: SeoAutomationState = {
     running: false,
     cycleInProgress: false,
-    proxySource: 'ProxyScrape Free API',
+    proxySource: 'All Working API',
     query: '',
     targetWebsite: '',
     intervalSec: 600,
@@ -73,10 +73,11 @@ export class SeoAutomationManager extends EventEmitter {
 
   async start(config: SeoAutomationConfig): Promise<SeoAutomationState> {
     const query = config.query.trim();
+    const keywords = parseAutomationKeywords(query);
     const targetWebsite = config.targetWebsite.trim();
     const targetHost = normalizeTargetHost(targetWebsite);
     const requestedInteractionHost = normalizeTargetHost(config.controlledTestHost ?? '');
-    if (!query) throw new Error('Enter a Google search keyword.');
+    if (keywords.length === 0) throw new Error('Enter at least one Google search keyword.');
     if (!targetHost) throw new Error('Enter a valid target website or site name.');
 
     // Target website is the interaction host by default. An explicit override
@@ -92,8 +93,7 @@ export class SeoAutomationManager extends EventEmitter {
     const intervalSec = normalizeAutomationIntervalSeconds(config.intervalSec);
 
     this.stopTimerOnly();
-    this.proxyManager.cancelCurrentValidation();
-    this.proxyManager.resetRotationHistory();
+    this.proxyManager.cancelCurrentFetch();
     this.generation += 1;
     this.pendingCycle = false;
 
@@ -102,7 +102,7 @@ export class SeoAutomationManager extends EventEmitter {
     this.state = {
       running: true,
       cycleInProgress: true,
-      proxySource: 'ProxyScrape Free API',
+      proxySource: 'All Working API',
       query,
       targetWebsite,
       controlledTestHost: controlledTestHost || undefined,
@@ -171,7 +171,7 @@ export class SeoAutomationManager extends EventEmitter {
   stop(): SeoAutomationState {
     this.generation += 1;
     this.pendingCycle = false;
-    this.proxyManager.cancelCurrentValidation();
+    this.proxyManager.cancelCurrentFetch();
     this.stopTimerOnly();
 
     for (const id of this.state.browserIds) {
@@ -225,6 +225,8 @@ export class SeoAutomationManager extends EventEmitter {
     const cycleNumber = this.state.cycleNumber + 1;
     const browserIds = [...this.state.browserIds];
     const { query, targetWebsite, controlledTestHost, maxPages } = this.state;
+    const keywords = parseAutomationKeywords(query);
+    const cycleQuery = keywords[(cycleNumber - 1) % keywords.length] ?? query;
 
     this.state = {
       ...this.state,
@@ -251,7 +253,7 @@ export class SeoAutomationManager extends EventEmitter {
         await this.browserManager.assignProxy(id, null);
       }
 
-      await this.proxyManager.fetchValidateAssignStreaming(
+      await this.proxyManager.fetchAssignDirect(
         browserIds,
         (assignment) => {
           if (!this.isCurrent(generation)) return;
@@ -260,7 +262,7 @@ export class SeoAutomationManager extends EventEmitter {
               generation,
               cycleNumber,
               assignment,
-              query,
+              cycleQuery,
               targetWebsite,
               controlledTestHost,
               maxPages
@@ -293,7 +295,7 @@ export class SeoAutomationManager extends EventEmitter {
 
       logger.info(
         'application',
-        `SEO cycle ${cycleNumber} complete: ${this.state.liveProxies} live, ` +
+        `SEO cycle ${cycleNumber} (${cycleQuery}) complete: ${this.state.liveProxies} available, ` +
           `${this.state.assignedBrowsers}/${browserIds.length} browser(s) assigned.`
       );
     } catch (err) {
@@ -333,9 +335,8 @@ export class SeoAutomationManager extends EventEmitter {
       this.browserManager.setBrowserKeepAlive(browserId, false, false);
       const measurementToken = this.browserManager.startMeasurementSession(browserId);
 
-      // Run the measurement loop independently of proxy validation. Each
-      // browser keeps observing for the lifetime of this proxy cycle and is
-      // invalidated as soon as the next rotation begins.
+      // Run the measurement loop for the lifetime of this proxy cycle. Each
+      // browser is invalidated as soon as the next rotation begins.
       void this.monitorBrowserSession(
         generation,
         cycleNumber,
@@ -541,4 +542,12 @@ export class SeoAutomationManager extends EventEmitter {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+
+function parseAutomationKeywords(value: string): string[] {
+  return value
+    .split(',')
+    .map((keyword) => keyword.trim())
+    .filter(Boolean);
 }
