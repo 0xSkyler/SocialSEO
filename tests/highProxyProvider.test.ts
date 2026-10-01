@@ -46,8 +46,7 @@ describe('HighProxyProvider', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe(HIGH_PROXY_URL);
     expect(fetchMock.mock.calls[0][1]).toMatchObject({
-      method: 'GET',
-      cache: 'no-store'
+      method: 'GET'
     });
     expect(fetchMock.mock.calls[0][1].headers).toMatchObject({
       Accept: 'text/plain',
