@@ -41,7 +41,7 @@ export class SeoAutomationManager extends EventEmitter {
   private state: SeoAutomationState = {
     running: false,
     cycleInProgress: false,
-    proxySource: 'High API',
+    proxySource: 'All Working API',
     query: '',
     currentQuery: '',
     targetWebsite: '',
@@ -113,7 +113,7 @@ export class SeoAutomationManager extends EventEmitter {
     this.state = {
       running: true,
       cycleInProgress: true,
-      proxySource: 'High API',
+      proxySource: 'All Working API',
       query,
       currentQuery: keywords[0],
       targetWebsite,
