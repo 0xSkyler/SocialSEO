@@ -73,5 +73,10 @@ export function isControlledTestHost(input: string): boolean {
   if (!host) return false;
   if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return true;
   if (/^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(host)) return true;
-  return /^(?:dev|test|staging|qa)\./i.test(host);
+
+  // Accept common controlled-environment naming patterns in the first label:
+  // test.example.com, staging.example.com, seo-test.example.com, qa-2.example.com.
+  const firstLabel = host.split('.')[0] ?? '';
+  return /^(?:dev|test|staging|qa)(?:[-\d].*)?$/i.test(firstLabel) ||
+    /(?:^|-)(?:dev|test|staging|qa)(?:-|$)/i.test(firstLabel);
 }
