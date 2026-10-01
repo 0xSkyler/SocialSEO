@@ -10,7 +10,7 @@ export function SeoTrackerPanel(): JSX.Element {
 
   const [query, setQuery] = useState('');
   const [targetWebsite, setTargetWebsite] = useState('');
-  const [controlledTestHost, setControlledTestHost] = useState('');
+  const [interactionEnabled, setInteractionEnabled] = useState(false);
   const [intervalSec, setIntervalSec] = useState(600);
   const [browserCount, setBrowserCount] = useState(10);
   const [maxPages, setMaxPages] = useState(20);
@@ -20,7 +20,7 @@ export function SeoTrackerPanel(): JSX.Element {
     if (!automation) return;
     if (automation.query) setQuery(automation.query);
     if (automation.targetWebsite) setTargetWebsite(automation.targetWebsite);
-    setControlledTestHost(automation.controlledTestHost ?? '');
+    setInteractionEnabled(Boolean(automation.controlledTestHost));
     setIntervalSec(automation.intervalSec);
     setBrowserCount(automation.browserCount);
     setMaxPages(automation.maxPages);
@@ -50,7 +50,7 @@ export function SeoTrackerPanel(): JSX.Element {
       await window.app.automation.start({
         query: query.trim(),
         targetWebsite: targetWebsite.trim(),
-        controlledTestHost: controlledTestHost.trim() || undefined,
+        controlledTestHost: interactionEnabled ? targetWebsite.trim() : undefined,
         intervalSec,
         browserCount,
         maxPages
@@ -84,7 +84,7 @@ export function SeoTrackerPanel(): JSX.Element {
           <h1>PocketSEO Mobile</h1>
           <p>
             All Working API → direct proxy assignment → Google monitoring → challenge pause/resume →
-            controlled-test interaction → rotation → fresh API pull.
+            explicit test interaction → rotation → fresh API pull.
           </p>
         </div>
         <span className={running || starting ? 'tracker-pill tracker-pill--on' : 'tracker-pill'}>
@@ -118,13 +118,14 @@ export function SeoTrackerPanel(): JSX.Element {
         </label>
 
         <label>
-          Interaction host (optional; auto for test/private targets)
+          <span>Controlled test interaction</span>
           <input
-            value={controlledTestHost}
+            type="checkbox"
+            checked={interactionEnabled}
             disabled={running}
-            onChange={(event) => setControlledTestHost(event.target.value)}
-            placeholder="auto-detected for staging/test/dev/qa targets"
+            onChange={(event) => setInteractionEnabled(event.target.checked)}
           />
+          <span>Enable automatic click and continuous same-host Keep Alive for this staged target.</span>
         </label>
 
         <label>
@@ -205,10 +206,10 @@ export function SeoTrackerPanel(): JSX.Element {
         Each cycle pulls a fresh proxy list from the All Working API, parses and deduplicates it,
         assigns one proxy per active browser, and discards that response at the next rotation.
         There is no proxy validation or next-cycle proxy buffer. Comma-separated keywords rotate
-        one per cycle and wrap back to the first keyword. For localhost/private/dev/test/staging/qa
-        targets, interaction is enabled automatically: an exact matched result is opened, landing
-        is verified, and continuous same-host Keep Alive starts without pressing the Keep Alive
-        button. Google challenges pause the monitor instead of ending it.
+        one per cycle and wrap back to the first keyword. For staged testing, enter the staged URL
+        directly in Target website and enable Controlled test interaction. The exact matched result
+        is opened, landing is verified, and same-host Keep Alive starts automatically and continues
+        until the cycle ends. No special dev/test/staging hostname pattern is required.
       </div>
 
       <div className="tracker-results">
