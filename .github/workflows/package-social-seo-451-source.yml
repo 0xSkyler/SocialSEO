@@ -1,0 +1,75 @@
+name: Package Social SEO 4.5.1 Source
+
+on:
+  push:
+    branches:
+      - social-seo-4.5.1-build
+
+permissions:
+  contents: read
+
+jobs:
+  package-source:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruct Social SEO 4.4.0 base
+        shell: pwsh
+        run: |
+          $b64 = (Get-Content "social-seo-4.4.0-payload\source.b64" -Raw).Trim()
+          [IO.File]::WriteAllBytes("social-seo-4.4.0.zip", [Convert]::FromBase64String($b64))
+          New-Item -ItemType Directory -Force -Path buildsrc | Out-Null
+          Expand-Archive -Path "social-seo-4.4.0.zip" -DestinationPath buildsrc -Force
+
+      - name: Apply 4.4.1 patch
+        shell: pwsh
+        run: |
+          $b64 = (Get-Content "social-seo-4.4.1-patch\patch.b64" -Raw).Trim()
+          [IO.File]::WriteAllBytes("social-seo-4.4.1-patch.zip", [Convert]::FromBase64String($b64))
+          Expand-Archive -Path "social-seo-4.4.1-patch.zip" -DestinationPath "buildsrc\Social-SEO" -Force
+
+      - name: Apply 4.4.2 patch
+        shell: pwsh
+        run: |
+          $parts = @(
+            "social-seo-4.4.2-patch\chunk-0.b64",
+            "social-seo-4.4.2-patch\chunk-1.b64",
+            "social-seo-4.4.2-patch\chunk-2a.b64",
+            "social-seo-4.4.2-patch\chunk-2b.b64",
+            "social-seo-4.4.2-patch\chunk-3.b64",
+            "social-seo-4.4.2-patch\chunk-4.b64"
+          )
+          $b64 = ($parts | ForEach-Object { (Get-Content $_ -Raw).Trim() }) -join ""
+          [IO.File]::WriteAllBytes("social-seo-4.4.2-patch.zip", [Convert]::FromBase64String($b64))
+          Expand-Archive -Path "social-seo-4.4.2-patch.zip" -DestinationPath "buildsrc\Social-SEO" -Force
+
+      - name: Apply 4.4.3 timeout patch
+        shell: pwsh
+        run: ./social-seo-4.4.3-build/apply-443.ps1
+
+      - name: Apply 4.5.1 elite proxy API source
+        shell: pwsh
+        run: ./social-seo-4.5.0-build/apply-450.ps1
+
+      - name: Verify assembled source
+        shell: pwsh
+        run: |
+          $pkg = Get-Content "buildsrc\Social-SEO\package.json" -Raw | ConvertFrom-Json
+          if ($pkg.version -ne "4.5.1") { throw "Expected 4.5.1, got $($pkg.version)" }
+          $source = Get-Content "buildsrc\Social-SEO\src\shared\proxySource.ts" -Raw
+          if (-not $source.Contains("http://169.58.35.69/data/elite.txt")) { throw "elite.txt source not present" }
+
+      - name: Create source ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "buildsrc\Social-SEO\*" -DestinationPath "Social-SEO-4.5.1-SOURCE.zip" -Force
+
+      - name: Upload source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Social-SEO-4.5.1-SOURCE
+          path: Social-SEO-4.5.1-SOURCE.zip
+          if-no-files-found: error
+          retention-days: 7
