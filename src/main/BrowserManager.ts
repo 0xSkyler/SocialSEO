@@ -1744,6 +1744,14 @@ export function buildInstallGoogleLiveTargetObserverScript(
         return String(host || '').toLowerCase().replace(/^www\\./, '').replace(/\\.$/, '');
       }
 
+      function hostMatchesTarget(host) {
+        var normalized = normalizeHost(host);
+        if (!normalized) return false;
+        if (normalized === target || normalized.endsWith('.' + target)) return true;
+        if (target.indexOf('.') === -1 && normalized.split('.').indexOf(target) !== -1) return true;
+        return false;
+      }
+
       function unwrap(href) {
         try {
           var resolved = new URL(href, location.href);
@@ -1770,9 +1778,13 @@ export function buildInstallGoogleLiveTargetObserverScript(
       }
 
       function mentionsTarget(text) {
-        var normalized = normalizeWords(text).replace(/\\s+/g, '');
-        var targetWords = normalizeWords(target).replace(/\\s+/g, '');
-        return normalized.indexOf(targetWords) !== -1;
+        var source = String(text || '').toLowerCase().replace(/www\\./g, '');
+        var escaped = target.replace(/[-/\\\\^$*+?.()|[\]{}]/g, '\\\\$&');
+        try {
+          return new RegExp('(^|[^a-z0-9.-])' + escaped + '(?=$|[^a-z0-9.-])', 'i').test(source);
+        } catch (_) {
+          return false;
+        }
       }
 
       function elementRect(element) {
@@ -1837,7 +1849,7 @@ export function buildInstallGoogleLiveTargetObserverScript(
             var score = 0;
             if (heading) score += 500;
             if (keywordMatches(title)) score += 450;
-            if (info.host === target) score += 350;
+            if (hostMatchesTarget(info.host)) score += 700;
             if (mentionsTarget(title)) score += 120;
             if (title.length >= 8) score += 80;
             if (rect) score += 40;
@@ -1868,7 +1880,7 @@ export function buildInstallGoogleLiveTargetObserverScript(
         // Recognition starts from rendered host/domain text, independent of
         // the anchor's current URL shape.
         var nodes = Array.prototype.slice.call(
-          root.querySelectorAll('cite,span,div,h3,h2,a')
+          root.querySelectorAll('cite,span,div,h3,h2,a,[data-href],[data-url]')
         );
         var bestBlock = null;
 
@@ -1988,13 +2000,21 @@ export function buildInstallGoogleLiveTargetObserverScript(
             if (!state.candidateText) state.candidateText = rootText.slice(0, 500);
           }
 
-          var anchors = Array.prototype.slice.call(root.querySelectorAll('a[href]'));
+          var anchors = Array.prototype.slice.call(
+            root.querySelectorAll('a[href],a[data-href],a[data-url]')
+          );
           var organic = [];
           var candidates = [];
 
           anchors.forEach(function(anchor) {
             try {
-              var destination = unwrap(anchor.getAttribute('href') || anchor.href || '');
+              var destination = unwrap(
+                anchor.getAttribute('href') ||
+                anchor.getAttribute('data-href') ||
+                anchor.getAttribute('data-url') ||
+                anchor.href ||
+                ''
+              );
               var host = destinationHost(destination);
               if (!destination || /(^|\\.)google\\.[a-z.]+$/i.test(host)) return;
 
@@ -2005,7 +2025,7 @@ export function buildInstallGoogleLiveTargetObserverScript(
                 if (text.length >= bestBlockText.length && text.length <= 4200) {
                   bestBlockText = text;
                 }
-                if (mentionsTarget(text) && keywordMatches(text)) break;
+                if (hostMatchesTarget(host) || (mentionsTarget(text) && keywordMatches(text))) break;
               }
 
               if (/\\bSponsored\\b/i.test(bestBlockText.slice(0, 280))) return;
@@ -2026,9 +2046,11 @@ export function buildInstallGoogleLiveTargetObserverScript(
               var normalizedUrl = destination.split('#')[0];
               organic.push(normalizedUrl + '|' + bestBlockText.slice(0, 120));
 
-              var exactHost = host === target;
+              var exactHost = hostMatchesTarget(host);
               var textHost = mentionsTarget(bestBlockText);
-              var keyMatch = keywordMatches(title) || keywordMatches(bestBlockText);
+              // Direct destination-host matches are authoritative on the SERP.
+              // Query-token matching remains for text-only fallbacks.
+              var keyMatch = exactHost || keywordMatches(title) || keywordMatches(bestBlockText);
               if (textHost && keywordMatches(bestBlockText)) {
                 state.targetTextSeen = true;
                 if (!state.candidateText || bestBlockText.length < state.candidateText.length) {
@@ -2062,7 +2084,7 @@ export function buildInstallGoogleLiveTargetObserverScript(
             if (blockMatch && blockMatch.chosen) {
               var chosen = blockMatch.chosen;
               var preferredUrl =
-                chosen.directHost === target && chosen.directUrl
+                hostMatchesTarget(chosen.directHost) && chosen.directUrl
                   ? chosen.directUrl
                   : (chosen.rawUrl || chosen.directUrl);
 
@@ -2121,7 +2143,9 @@ export function buildInstallGoogleLiveTargetObserverScript(
         observer.observe(observeRoot, {
           childList: true,
           subtree: true,
-          characterData: true
+          characterData: true,
+          attributes: true,
+          attributeFilter: ['href', 'data-href', 'data-url']
         });
       }
 
@@ -2310,7 +2334,7 @@ export function buildGoogleResultScanScript(targetHost: string, query = ''): str
         var candidates = [];
         if (seedAnchor) candidates.push(seedAnchor);
         if (container && container.querySelectorAll) {
-          Array.prototype.slice.call(container.querySelectorAll('a[href]')).forEach(function (a) {
+          Array.prototype.slice.call(container.querySelectorAll('a[href],a[data-href],a[data-url]')).forEach(function (a) {
             if (candidates.indexOf(a) === -1) candidates.push(a);
           });
         }
@@ -2319,7 +2343,13 @@ export function buildGoogleResultScanScript(targetHost: string, query = ''): str
         for (var j = 0; j < candidates.length; j += 1) {
           var a = candidates[j];
           if (!elementRect(a)) continue;
-          var destination = unwrap(a.getAttribute('href') || a.href || '');
+          var destination = unwrap(
+            a.getAttribute('href') ||
+            a.getAttribute('data-href') ||
+            a.getAttribute('data-url') ||
+            a.href ||
+            ''
+          );
           var text = (a.innerText || a.getAttribute('aria-label') || '').trim();
           var hasHeading = Boolean(a.querySelector && a.querySelector('h3'));
           var direct = destinationMatches(destination);
@@ -2343,7 +2373,9 @@ export function buildGoogleResultScanScript(targetHost: string, query = ''): str
         return best;
       }
 
-      var anchors = Array.prototype.slice.call(searchRoot ? searchRoot.querySelectorAll('a[href]') : []);
+      var anchors = Array.prototype.slice.call(
+        searchRoot ? searchRoot.querySelectorAll('a[href],a[data-href],a[data-url]') : []
+      );
 
       // Build a snapshot of actual organic-result anchors. This is used by
       // the main process to decide when a page has genuinely stabilized.
@@ -2354,7 +2386,13 @@ export function buildGoogleResultScanScript(targetHost: string, query = ''): str
       var organicUrls = [];
       for (var s = 0; s < anchors.length; s += 1) {
         var candidate = anchors[s];
-        var candidateHref = unwrap(candidate.getAttribute('href') || candidate.href || '');
+        var candidateHref = unwrap(
+          candidate.getAttribute('href') ||
+          candidate.getAttribute('data-href') ||
+          candidate.getAttribute('data-url') ||
+          candidate.href ||
+          ''
+        );
         if (!candidateHref || isGoogleDestination(candidateHref)) continue;
 
         var candidateContainer = candidate.closest && candidate.closest('.MjjYud, .g, [data-snhf], [data-hveid]');
@@ -2383,7 +2421,7 @@ export function buildGoogleResultScanScript(targetHost: string, query = ''): str
       // ancestor that also contains the search-keyword tokens, then choose
       // the best article/title link inside that block.
       var textCandidates = Array.prototype.slice.call(
-        searchRoot ? searchRoot.querySelectorAll('cite, span, div') : []
+        searchRoot ? searchRoot.querySelectorAll('cite, span, div, h3, h2, a, [data-href], [data-url]') : []
       );
       var bestTextMatch = null;
 
@@ -2403,7 +2441,13 @@ export function buildGoogleResultScanScript(targetHost: string, query = ''): str
           var articleAnchor = bestAnchor(current, textNode.closest && textNode.closest('a[href]'));
           if (!articleAnchor) continue;
 
-          var articleDestination = unwrap(articleAnchor.getAttribute('href') || articleAnchor.href || '');
+          var articleDestination = unwrap(
+            articleAnchor.getAttribute('href') ||
+            articleAnchor.getAttribute('data-href') ||
+            articleAnchor.getAttribute('data-url') ||
+            articleAnchor.href ||
+            ''
+          );
           if (!articleDestination || isGoogleDestination(articleDestination)) continue;
 
           var articleTitleNode = articleAnchor.querySelector && articleAnchor.querySelector('h3');
@@ -2414,10 +2458,9 @@ export function buildGoogleResultScanScript(targetHost: string, query = ''): str
             ''
           ).trim();
 
-          // The keyword may live in the blue title or in the same result
-          // block/snippet. Requiring the full block to contain the tokens is
-          // what makes this resilient to Google's split title/domain markup.
-          if (!keywordMatches(blockText)) continue;
+          // A verified destination-host match is sufficient on this SERP.
+          // Text-only fallbacks still require query context.
+          if (!destinationMatches(articleDestination) && !keywordMatches(blockText)) continue;
 
           var articleRect = elementRect(articleAnchor);
           if (!articleRect) continue;
@@ -2615,10 +2658,18 @@ export function buildClickGoogleTargetResultScript(targetHost: string, query = '
       }
 
       var searchRoot = document.querySelector('#search') || document.querySelector('#rso') || document.querySelector('main') || document.body;
-      var anchors = Array.prototype.slice.call(searchRoot ? searchRoot.querySelectorAll('a[href]') : []);
+      var anchors = Array.prototype.slice.call(
+        searchRoot ? searchRoot.querySelectorAll('a[href],a[data-href],a[data-url]') : []
+      );
       for (var i = 0; i < anchors.length; i += 1) {
         var anchor = anchors[i];
-        var destination = unwrap(anchor.getAttribute('href') || anchor.href || '');
+        var destination = unwrap(
+          anchor.getAttribute('href') ||
+          anchor.getAttribute('data-href') ||
+          anchor.getAttribute('data-url') ||
+          anchor.href ||
+          ''
+        );
         var container = anchor.closest('.MjjYud, .g, [data-snhf]') ||
           (anchor.parentElement && anchor.parentElement.parentElement && anchor.parentElement.parentElement.parentElement) ||
           anchor.parentElement || anchor;
