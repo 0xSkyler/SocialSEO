@@ -270,9 +270,89 @@ describe('SeoAutomationManager direct High API workflow', () => {
   });
 
 
-  it('auto-enables controlled test interaction when the target itself is a staging host', async () => {
+  it('does not enable interaction unless the user explicitly enables test interaction', async () => {
     const host = 'staging.example.com';
-    const p = proxy('auto-controlled');
+    const p = proxy('not-confirmed');
+    const proxyManager = {
+      cancelCurrentFetch() {},
+      clearAssignments() {},
+      async loadCycleProxies(browserIds: number[]) {
+        return loadResult(browserIds, [p]);
+      }
+    } as unknown as ProxyManager;
+
+    let token = 0;
+    let allowInteractionSeen = true;
+    let clickCalls = 0;
+    let keepAliveCalls = 0;
+
+    const browserManager = {
+      cancelMeasurementSession() {},
+      setBrowserKeepAlive() {},
+      async assignProxy() {},
+      startMeasurementSession() {
+        token += 1;
+        return token;
+      },
+      isMeasurementSessionCurrent(_id: number, current: number) {
+        return current === token;
+      },
+      async broadcastSearch(
+        id: number,
+        _query: string,
+        _target: string,
+        _maxPages: number,
+        _token: number,
+        allowInteraction: boolean
+      ): Promise<BroadcastSearchResult> {
+        allowInteractionSeen = allowInteraction;
+        return {
+          browserId: id,
+          status: 'matched',
+          landedUrl: 'https://www.google.com/search?q=test',
+          matchedUrl: 'https://' + host + '/article',
+          matchedTitle: 'Article',
+          monitoring: true,
+          interactionStatus: 'detected',
+          ranAt: new Date().toISOString()
+        };
+      },
+      async clickControlledGoogleResult() {
+        clickCalls += 1;
+        return true;
+      },
+      startControlledKeepAlive() {
+        keepAliveCalls += 1;
+      },
+      async waitForGoogleRecovery() {
+        return true;
+      }
+    } as unknown as BrowserManager;
+
+    const manager = new SeoAutomationManager(proxyManager, browserManager, async () => [1]);
+    const observed = new Promise<BroadcastSearchResult>((resolve) => {
+      manager.on('seoResult', ({ result }) => resolve(result));
+    });
+
+    await manager.start({
+      query: 'A',
+      targetWebsite: host,
+      intervalSec: 600,
+      browserCount: 1,
+      maxPages: 20
+    });
+
+    const result = await observed;
+    expect(allowInteractionSeen).toBe(false);
+    expect(clickCalls).toBe(0);
+    expect(keepAliveCalls).toBe(0);
+    expect(result.interactionStatus).toBe('detected');
+    manager.stop();
+  });
+
+  it('allows explicit staged interaction without requiring a special hostname pattern', async () => {
+    const host = 'preview.example.com';
+    const p = proxy('explicit-preview');
     const proxyManager = {
       cancelCurrentFetch() {},
       clearAssignments() {},
@@ -338,6 +418,7 @@ describe('SeoAutomationManager direct High API workflow', () => {
     await manager.start({
       query: 'A',
       targetWebsite: host,
+      controlledTestHost: host,
       intervalSec: 600,
       browserCount: 1,
       maxPages: 20
@@ -352,7 +433,7 @@ describe('SeoAutomationManager direct High API workflow', () => {
     manager.stop();
   });
 
-  it('rejects a production interaction-host override', async () => {
+  it('rejects an interaction target that differs from the target website', async () => {
     const manager = new SeoAutomationManager(
       { cancelCurrentFetch() {}, clearAssignments() {} } as unknown as ProxyManager,
       {} as BrowserManager,
@@ -362,12 +443,13 @@ describe('SeoAutomationManager direct High API workflow', () => {
     await expect(
       manager.start({
         query: 'A',
-        targetWebsite: 'example.com',
-        controlledTestHost: 'example.com',
+        targetWebsite: 'preview.example.com',
+        controlledTestHost: 'different.example.com',
         intervalSec: 600,
         browserCount: 1,
         maxPages: 20
       })
-    ).rejects.toThrow(/localhost|private|dev|test|staging|qa/i);
+    ).rejects.toThrow(/exactly match/i);
   });
+
 });
