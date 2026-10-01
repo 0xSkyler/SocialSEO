@@ -35,7 +35,7 @@ win:
       arch:
         - x64
   icon: build/icons/icon.ico
-  artifactName: ProxyDesk-AllWorking-Desktop-Setup.${ext}
+  artifactName: ProxyDesk-AllWorking-StagedTest-Desktop-Setup.${ext}
 
 nsis:
   oneClick: false
@@ -44,7 +44,7 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: ProxyDesk
-  artifactName: ProxyDesk-AllWorking-Desktop-Setup.${ext}
+  artifactName: ProxyDesk-AllWorking-StagedTest-Desktop-Setup.${ext}
 
 # Linux/mac targets are not required by this project (Windows-only deliverable)
 # but are left buildable for local development on other platforms.
