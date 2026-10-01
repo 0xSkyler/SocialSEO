@@ -5,7 +5,7 @@ export interface SeoAutomationConfig {
   targetWebsite: string;
   /** Exact hostname allowed for autonomous click + Keep Alive in controlled testing. */
   controlledTestHost?: string;
-  /** How often a new ProxyScrape fetch + validation + proxy rotation begins. */
+  /** How often a fresh All Working API fetch + proxy rotation begins. */
   intervalSec: number;
   /** Number of isolated browser workspaces, 1-100. */
   browserCount: number;
@@ -16,7 +16,7 @@ export interface SeoAutomationConfig {
 export interface SeoAutomationState {
   running: boolean;
   cycleInProgress: boolean;
-  proxySource: 'ProxyScrape Free API';
+  proxySource: 'All Working API';
   query: string;
   targetWebsite: string;
   controlledTestHost?: string;
