@@ -86,8 +86,7 @@ $newEligible = @'
     );
   }
 '@
-if (-not $pm.Contains($oldEligible.Trim())) { throw "Patch point not found: eligiblePool" }
-$pm = $pm.Replace($oldEligible.Trim(), $newEligible.Trim())
+$pm = Replace-Once $pm '  private eligiblePool\(\): ProxyRecord\[\] \{[\s\S]*?\r?\n  \}' $newEligible "eligiblePool"
 
 $oldImported = @'
     this.lastImportedIds = [...new Set(touchedIds)];
@@ -110,8 +109,7 @@ $newImported = @'
     }
     return {
 '@
-if (-not $pm.Contains($oldImported.Trim())) { throw "Patch point not found: trusted import" }
-$pm = $pm.Replace($oldImported.Trim(), $newImported.Trim())
+$pm = Replace-Once $pm '    this\.lastImportedIds = \[\.\.\.new Set\(touchedIds\)\];\r?\n    return \{' $newImported "trusted import"
 
 $oldImportResult = @'
     const result = this.mergeProxyText(text, source, true);
@@ -125,8 +123,7 @@ $newImportResult = @'
     this.validationProgress.completed = this.currentPoolIds.size;
     this.validationProgress.working = this.currentPoolIds.size;
 '@
-if (-not $pm.Contains($oldImportResult.Trim())) { throw "Patch point not found: import pool state" }
-$pm = $pm.Replace($oldImportResult.Trim(), $newImportResult.Trim())
+$pm = Replace-Once $pm '    const result = this\.mergeProxyText\(text, source, true\);\r?\n    this\.validationProgress = this\.emptyProgress\(\);' $newImportResult "import pool state"
 
 $fetchProviderText = @'
   private async fetchProviderText(_provider: ProxyProvider): Promise<{ text: string; label: string }> {
@@ -150,8 +147,7 @@ $newFetchResult = @'
     this.lastProviderRefreshAt = Date.now();
     return result;
 '@
-if (-not $pm.Contains($oldFetchResult.Trim())) { throw "Patch point not found: fetchProvider result" }
-$pm = $pm.Replace($oldFetchResult.Trim(), $newFetchResult.Trim())
+$pm = Replace-Once $pm '    const result = await this\.importText\(fetched\.text, fetched\.label\);\r?\n    this\.lastProviderRefreshAt = Date\.now\(\);\r?\n    return result;' $newFetchResult "fetchProvider result"
 
 $cycleBlock = @'
   noteCompletedBrowserCycle(_cycleNumber: number): boolean {
@@ -302,8 +298,7 @@ $newClear = @'
     this.refreshPromise = undefined;
     this.emitChanged();
 '@
-if (-not $pm.Contains($oldClear.Trim())) { throw "Patch point not found: clear state" }
-$pm = $pm.Replace($oldClear.Trim(), $newClear.Trim())
+$pm = Replace-Once $pm '    this\.lastProviderRefreshAt = 0;\r?\n    this\.emitChanged\(\);' $newClear "clear state"
 Write-Text "src\main\ProxyManager.ts" $pm
 
 $pipeline = @'
