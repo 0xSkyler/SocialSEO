@@ -12,6 +12,7 @@ import {
   parseAutomationKeywords
 } from '../shared/types/automation';
 import { isControlledTestHost, normalizeTargetHost } from '../shared/seo';
+import { HIGH_PROXY_URL } from '../proxy/HighProxyProvider';
 import type { BrowserManager } from './BrowserManager';
 import type { ProxyManager } from './ProxyManager';
 import { logger } from './Logger';
@@ -27,7 +28,7 @@ export declare interface SeoAutomationManager {
 /**
  * Single-purpose SEO Tracker orchestration:
  *
- * Fresh high.txt fetch -> direct exclusive assignment -> Google monitoring
+ * Fresh all-working.txt fetch -> direct exclusive assignment -> Google monitoring
  * -> challenge pause/resume -> controlled-host interaction when explicitly
  * configured -> rotate, discard the old list, and fetch again.
  */
@@ -273,7 +274,7 @@ export class SeoAutomationManager extends EventEmitter {
         try {
           logger.info(
             'proxy',
-            `[Cycle ${cycleNumber}] Requesting fresh proxies from http://169.58.35.69/data/high.txt`
+            `[Cycle ${cycleNumber}] Requesting fresh proxies from ${HIGH_PROXY_URL}`
           );
           cycleProxyLoad = await this.proxyManager.loadCycleProxies(browserIds);
           break;
