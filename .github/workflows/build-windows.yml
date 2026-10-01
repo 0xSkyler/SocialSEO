@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - main
-      - feature/proxydesk-all-working-dom-keepalive
+      - feature/proxydesk-explicit-test-mode
     tags:
       - 'v*'
   pull_request:
@@ -67,15 +67,15 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ProxyDesk-AllWorking-Desktop-windows
-          path: release/ProxyDesk-AllWorking-Desktop-Setup.exe
+          name: ProxyDesk-AllWorking-StagedTest-Desktop-windows
+          path: release/ProxyDesk-AllWorking-StagedTest-Desktop-Setup.exe
           if-no-files-found: error
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: release/ProxyDesk-AllWorking-Desktop-Setup.exe
+          files: release/ProxyDesk-AllWorking-StagedTest-Desktop-Setup.exe
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
