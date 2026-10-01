@@ -32,7 +32,7 @@ export class ProxyManager extends EventEmitter {
     this.cancelCurrentFetch();
     this.currentCycleProxies.clear();
     this.assignments.clear();
-    logger.info('proxy', \`Proxy manager ready: direct cycle source \${HIGH_PROXY_URL}.\`);
+    logger.info('proxy', `Proxy manager ready: direct cycle source ${HIGH_PROXY_URL}.`);
   }
 
   getAll(): ProxyRecord[] {
@@ -106,8 +106,8 @@ export class ProxyManager extends EventEmitter {
 
       logger.info(
         'proxy',
-        \`High API cycle fetch: raw=\${batch.rawEntries}, parsed=\${batch.parsedEntries}, \` +
-          \`unique=\${batch.proxies.length}, assigned=\${assignedCount}/\${browserIds.length}.\`
+        `High API cycle fetch: raw=${batch.rawEntries}, parsed=${batch.parsedEntries}, ` +
+          `unique=${batch.proxies.length}, assigned=${assignedCount}/${browserIds.length}.`
       );
 
       return summary;
