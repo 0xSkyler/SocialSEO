@@ -1,62 +1,18 @@
-import type { ProxyRecord } from './proxy';
-import { MAX_BROWSER_COUNT } from '../constants';
+export type BrowserEngine = 'chromium';
 
-export type BrowserConnectionStatus =
-  | 'idle'
-  | 'loading'
-  | 'connected'
-  | 'proxy-checking'
-  | 'proxy-failed'
-  | 'no-proxy'
-  | 'crashed';
-
-export interface BrowserState {
-  id: number;
+export interface EngineInfo {
+  engine: BrowserEngine;
   label: string;
-  url: string;
-  loading: boolean;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  proxy: ProxyRecord | null;
-  connectionStatus: BrowserConnectionStatus;
-  detectedIp?: string;
-  lastIpCheckAt?: string;
-  errorMessage?: string;
-  crashCount: number;
-  title?: string;
-  faviconUrl?: string;
+  available: boolean;
+  detail: string;
+  executablePath?: string;
+  bundled: boolean;
 }
 
-export interface BrowserBounds {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+export interface WorkspacePreferences {
+  id: number;
+  engine: BrowserEngine;
+  targetUrl: string;
+  rotationSeconds: number;
+  keepAlive: boolean;
 }
-
-export type BroadcastSearchStatus = 'matched' | 'no-match' | 'blocked' | 'error';
-
-export interface BroadcastSearchResult {
-  browserId: number;
-  status: BroadcastSearchStatus;
-  /** The URL the browser ended up on — the matched result's page when
-   * status is 'matched', otherwise the Google results page itself. */
-  landedUrl?: string;
-  /** Title of the result that matched, when status is 'matched'. */
-  matchedTitle?: string;
-  /** How many organic results were scanned before finding a match (or not). */
-  resultsScanned?: number;
-  error?: string;
-  ranAt: string;
-}
-
-/** @deprecated kept only so nothing importing the old name breaks; the real
- * ceiling is MAX_BROWSER_COUNT (see shared/constants) and browser count is
- * now a user setting, not a fixed constant. */
-export const BROWSER_COUNT = MAX_BROWSER_COUNT;
-
-/** Every possible browser id, up to the maximum configurable count. Actual
- * rendering/creation always slices this down to `settings.browser.browserCount`
- * (see BrowserGrid.tsx and main.ts's getBrowserIds) — this array itself is
- * just the full id space, not "how many browsers exist right now". */
-export const BROWSER_IDS: number[] = Array.from({ length: MAX_BROWSER_COUNT }, (_, i) => i + 1);

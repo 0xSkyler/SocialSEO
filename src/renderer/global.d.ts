@@ -1,9 +1,8 @@
-import type { AppApi } from '../shared/types/ipc';
+import type { ProxyDeskApi } from '../shared/types/ipc';
 
 declare global {
   interface Window {
-    app: AppApi;
+    proxydesk: ProxyDeskApi;
   }
 }
-
 export {};
