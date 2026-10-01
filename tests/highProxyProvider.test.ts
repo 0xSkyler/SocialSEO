@@ -10,6 +10,10 @@ afterEach(() => {
 });
 
 describe('HighProxyProvider', () => {
+  it('uses the all-working proxy endpoint', () => {
+    expect(HIGH_PROXY_URL).toBe('http://169.58.35.69/data/all-working.txt');
+  });
+
   it('parses supported formats, ignores junk, and deduplicates by host+port', () => {
     const batch = parseHighProxyText([
       '# comment',
