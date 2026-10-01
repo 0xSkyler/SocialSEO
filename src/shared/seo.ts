@@ -65,3 +65,13 @@ export function buildGoogleSearchUrl(query: string, pageIndex = 0): string {
   if (safePage > 0) params.set('start', String(safePage * 10));
   return `https://www.google.com/search?${params.toString()}`;
 }
+
+
+/** True only for clearly non-production hosts suitable for automated interaction. */
+export function isControlledTestHost(input: string): boolean {
+  const host = normalizeTargetHost(input);
+  if (!host) return false;
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return true;
+  if (/^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(host)) return true;
+  return /^(?:dev|test|staging|qa)\./i.test(host);
+}
