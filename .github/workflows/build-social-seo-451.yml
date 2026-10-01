@@ -54,7 +54,7 @@ jobs:
 
       - name: Apply 4.5.1 elite proxy API source
         shell: pwsh
-        run: ./social-seo-4.5.1-build/apply-450.ps1
+        run: ./social-seo-4.5.0-build/apply-450.ps1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
